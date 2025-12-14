@@ -64,6 +64,10 @@ min_distance=2
 #findEssentialMat PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
 prob_essent_mat=0.999
 thresh_essent_mat=1.0
+#PNP RANSAC PARAMETERS
+rep_error = 3.0 
+iter_count = 200
+confidence = 0.9999
 
 # --- Helper Functions ---
 #functions that transform keypoints from 2xN shape to Nx1x2 shape for KLT, and viceversa
@@ -154,7 +158,7 @@ cand=cv2.goodFeaturesToTrack(img1,max_num_corners,quality_level,min_distance)
 cand=klt_to_P2xN(cand)
 #to ensures points in C are not redundant with ones in P, we perform a minimum distance check
 diff=cand[:,:,None]-points2[:,None,:]
-dist_sq=np.sum(diff**2,axis=0)
+dist_sq=np.sum(diff**2,axis=0) #distance of each candidate to all points in P
 min_dist_sq=np.min(dist_sq,axis=1) #distance of each candidate to the closest point in P
 #Keep only candidates farther than min_distance
 mask=min_dist_sq>(min_distance**2)
