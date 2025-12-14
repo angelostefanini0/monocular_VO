@@ -66,9 +66,21 @@ prob_essent_mat=0.999
 thresh_essent_mat=1.0
 
 # --- Helper Functions ---
-#functions that transform keypoints from 2xN shape to Nx1x2 shape for KLT
+#functions that transform keypoints from 2xN shape to Nx1x2 shape for KLT, and viceversa
 def P2xN_to_klt(P):return P.T.astype(np.float32).reshape(-1,1,2) 
 def klt_to_P2xN(Pklt):return Pklt.reshape(-1,2).T.astype(np.float32)
+
+# --- State ---
+S = {
+    # Localization
+    "P": np.zeros((2, 0), dtype=float),  # 2xN - image coordinates of tracked features
+    "X": np.zeros((3, 0), dtype=float),  # 3xN - world coordinates of tracked features
+
+    # Triangulation candidates
+    "C": np.zeros((2, 0), dtype=float),  # 2xM - position of candidate features in the current frame (image coordinates)
+    "F": np.zeros((2, 0), dtype=float),  # 2xM - position of candidate features in the first frame they were observed (image coordinates)
+    "T": np.zeros((12, 0), dtype=float)  # 12xM - pose of the frame at which candidate features were observed firstly observed
+}
 
 # --- Bootstrap ---
 bootstrap_frames = [0, 2]  # example: you must set actual bootstrap indices
@@ -90,7 +102,7 @@ else:
     raise ValueError("Invalid dataset index")
 
 # 1) - harris to detect keypoints in first keyframe (img0)
-pts1=cv2.goodFeaturesToTrack(img0,max_num_corners,quality_level,min_distance)
+pts1=cv2.goodFeaturesToTrack(img0,max_num_corners,quality_level,min_distance) #Nx1x2
 pts1=pts1.astype(np.float32)
 
 # 2) - KLT to track the keypoints to the second keyframe (img1)
@@ -120,11 +132,9 @@ _,R,t,maskPose=cv2.recoverPose(E,corr1_inliers,corr2_inliers,K)
 maskPose=maskPose.reshape(-1).astype(bool)
 corr1_final=corr1_inliers[maskPose]
 corr2_final=corr2_inliers[maskPose]
+
 t=t.reshape(3,1)
-T_WC1=np.eye(4,dtype=np.float64)
-T_WC2=np.eye(4,dtype=np.float64)
-T_WC2[:3,:3]=R
-T_WC2[:3,3:4]=t
+T_WC2=np.hstack((R,t)).astype(np.float64) #3x4
 
 # 4) - finally, we can perform triangulation, and thus construnct the first point cloud
 #compute the projection matrices
@@ -133,19 +143,38 @@ P2=K@np.hstack((R,t))
 #triangulatePoints wants 2xN
 points1=corr1_final.T
 points2=corr2_final.T
-
 X_homogeneous=cv2.triangulatePoints(P1,P2,points1,points2)
 X=(X_homogeneous[:3,:]/X_homogeneous[3:4,:]).astype(np.float32)
 
+# 5) - set up of the state
+S["P"]=points2
+S["X"]=X
+#to create the candidates set C, we must detect new features, and check that they are not already in P
+cand=cv2.goodFeaturesToTrack(img1,max_num_corners,quality_level,min_distance)
+cand=klt_to_P2xN(cand)
+#to ensures points in C are not redundant with ones in P, we perform a minimum distance check
+diff=cand[:,:,None]-points2[:,None,:]
+dist_sq=np.sum(diff**2,axis=0)
+min_dist_sq=np.min(dist_sq,axis=1) #distance of each candidate to the closest point in P
+#Keep only candidates farther than min_distance
+mask=min_dist_sq>(min_distance**2)
+C=cand[:,mask]
+T=np.repeat(T_WC2.reshape(12,1),C.shape[1],axis=1)
+S["C"]=C
+S["F"]=C.copy()
+S["T"]=T
 
 
 
 
-
+prev_img = img1
 # --- Continuous operation ---
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"\n\nProcessing frame {i}\n=====================")
-    
+
+   
+    # LOAD IMAGE 
+   
     if ds == 0:
         image_path = os.path.join(kitti_path, '05', 'image_0', f"{i:06d}.png")
     elif ds == 1:
@@ -156,14 +185,74 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
         image_path = os.path.join(own_dataset_path, f"{i:06d}.png")
     else:
         raise ValueError("Invalid dataset index")
-    
-    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    
-    if image is None:
+
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
         print(f"Warning: could not read {image_path}")
         continue
+
     
-    # Simulate 'pause(0.01)'
-    cv2.waitKey(10)
+    # SHOW IMAGE 
+    cv2.imshow("Input image", img)
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27:  # ESC
+        break
+
+   
+    # 1) TRACK ACTIVE KEYPOINTS P (KLT)
+    P_prev =  P2xN_to_klt(S["P"])  # Nx1x2
+    X_prev = S["X"].T.astype(np.float32)                    # Nx3
+
+    P_tr, st, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, P_prev, None, **klt_params)
     
-    prev_img = image
+
+    st = st.reshape(-1).astype(bool)
+    P_tr = P_tr.reshape(-1, 2)[st]  # Nx2
+    X_tr = X_prev[st]               # Nx3
+
+    
+
+    # 2) PnP + RANSAC (2D-3D) -> Pose
+    ok, rvec, tvec, inliers = cv2.solvePnPRansac(
+        objectPoints=X_tr,
+        imagePoints=P_tr,
+        cameraMatrix=K,
+        distCoeffs=None,
+        reprojectionError=rep_error, #when we consider a point inlier or not
+        iterationsCount=iter_count, #number of random subsets
+        confidence=confidence,
+        flags=cv2.SOLVEPNP_ITERATIVE
+    )
+
+
+    inliers = inliers.reshape(-1)
+    P_in = P_tr[inliers]  # nin x2
+    X_in = X_tr[inliers]  # nin x3
+
+    R_cw, _ = cv2.Rodrigues(rvec)
+    T_cw = np.hstack([R_cw,tvec])
+    T_cw=np.vstack([T_cw,[0,0,0,1]])
+    T_wc = np.linalg.inv(T_cw)
+    T_wc=T_wc.flatten()
+
+    # aggiorna stato localization in formato 2xN, 3xN
+    S["P"] = P_in.T
+    S["X"] = X_in.T
+
+    #nello stato abbiamo inserito i PUNTI 2D e 3D relativi a img (che useremo come prev_img al prossimo loop)
+
+
+    # 3) TRACK CANDIDATES C (KLT)
+    if S["C"].shape[1] > 0:
+        C_prev =  P2xN_to_klt(S["C"])  # Mx1x2
+
+        C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, C_prev, None, *klt_params)
+    
+        stc = stc.reshape(-1).astype(bool)
+        C_tr = C_tr.reshape(-1, 2)[stc]       # Mc x2, teniamo solo i candidate points che sono stati trackati con successo 
+        F_tr = S["F"].T[stc]                  # Mc x2, shrinkiamo F
+        T_tr = S["T"][:, stc]                 # 12 x Mc, shrinkiamo T
+
+        S["C"] = C_tr.T                       #aggiorniamo lo stato (C, F, T)
+        S["F"] = F_tr.T
+        S["T"] = T_tr
