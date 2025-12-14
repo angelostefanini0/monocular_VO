@@ -1,0 +1,13 @@
+name: vo
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - numpy
+  - scipy
+  - matplotlib
+  - pip
+  - pip:
+      - opencv-python
+      - opencv-contrib-python
+      - pyyaml
