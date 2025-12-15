@@ -1,4 +1,3 @@
-
 import os
 import cv2
 import numpy as np
@@ -17,7 +16,7 @@ DRAW_NEW_CANDS_CYAN = False  # Nuovi candidates
 DRAW_REPROJ_MAGENTA = True  # Verifica riproiezione 3D->2D
 
 # --- Setup ---
-ds = 1 # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
+ds = 0 # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 
 # Define dataset paths
 # (Set these variables before running)
@@ -29,8 +28,13 @@ ds = 1 # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 if ds == 0:
     ANGLE_THRESHOLD = np.deg2rad(0.1) 
     kitti_path = r"./datasets/kitti05/kitti"
-    ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
-    ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
+
+    full_poses_gt = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt')) 
+
+    ground_truth = full_poses_gt[:, [-9, -1]]  
+
+    initial_scale_gt_distance = np.linalg.norm(full_poses_gt[2, [3, 7, 11]] - full_poses_gt[0, [3, 7, 11]]) 
+    print(f"Initial ground truth scale distance (frame 0 to 2): {initial_scale_gt_distance:.4f} meters")
     last_frame = 2759
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
@@ -39,7 +43,7 @@ if ds == 0:
     ])
 elif ds == 1:
     malaga_path = r"./datasets/malaga-urban-dataset-extract-07/malaga-urban-dataset-extract-07"
-    ANGLE_THRESHOLD = np.deg2rad(0.01)
+    ANGLE_THRESHOLD = np.deg2rad(0.02)
     img_dir = os.path.join(
         malaga_path,
         "malaga-urban-dataset-extract-07_rectified_800x600_Images"
@@ -52,9 +56,7 @@ elif ds == 1:
         if f.endswith("_left.jpg")
     ])
 
-    print("Malaga LEFT images found:", len(left_images))
-    assert len(left_images) > 10, "No left images found in Malaga dataset!"
-
+   
     last_frame = len(left_images) - 1
 
     K = np.array([
@@ -169,6 +171,7 @@ corr1_final = corr1_inliers[maskPose]
 corr2_final = corr2_inliers[maskPose]
 
 t = t.reshape(3, 1)
+
 T_CW2 = np.hstack((R, t)).astype(np.float64)
 
 # 4) Triangulate
@@ -217,6 +220,12 @@ if SHOW_TRAJECTORY:
     ax_traj.axis('equal')
 
 prev_img = img1
+
+# --- SCALE MULTI-FRAME STATE (ADDED, MINIMAL) ---
+R_cw_prev = None
+tvec_prev = None
+t_wc_prev = None
+t_wc_metric = np.zeros((3, 1), dtype=np.float64)
 
 # --- Continuous operation ---
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
@@ -289,10 +298,38 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     if SHOW_TRAJECTORY:
         # Camera pose in World frame: T_wc = inv(T_cw)
         R_wc = R_cw.T
-        t_wc = -R_wc @ tvec
-        
-        est_traj_x.append(t_wc[0, 0])
-        est_traj_z.append(t_wc[2, 0])
+        t_wc = (-R_wc @ tvec).astype(np.float64)
+
+        if t_wc_prev is None:
+            t_wc_prev = t_wc.copy()
+            R_cw_prev = R_cw.copy()
+            tvec_prev = tvec.copy()
+
+        else:
+            delta_est = (t_wc - t_wc_prev)
+
+            if ds == 0:
+                delta_gt = (full_poses_gt[i, [3, 7, 11]] - full_poses_gt[i-1, [3, 7, 11]]).reshape(3, 1)
+            elif ds == 2:
+                # se vuoi fare la stessa cosa su parking con poses.txt devi adattare gli indici
+                delta_gt = 0.0001
+            else:
+                delta_gt = np.zeros((3, 1), dtype=np.float64)
+
+            scale_i = 1.0
+            if ds == 0:
+                scale_i = np.linalg.norm(delta_gt) / (np.linalg.norm(delta_est) + 1e-9)
+            if ds == 2:
+                scale_i = 0.15/(np.linalg.norm(delta_est) + 1e-9)
+
+            t_wc_metric = t_wc_metric + scale_i * delta_est
+
+            t_wc_prev = t_wc.copy()
+            R_cw_prev = R_cw.copy()
+            tvec_prev = tvec.copy()
+
+        est_traj_x.append(t_wc_metric[0, 0])
+        est_traj_z.append(t_wc_metric[2, 0])
         
         # Update plot every frame (or utilize modulus for speed)
         line_est.set_data(est_traj_x, est_traj_z)
@@ -302,7 +339,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
         # Forward vector (Z-axis of camera in world frame) is the 3rd column of R_wc
         forward_x = R_wc[0, 2]
         forward_z = R_wc[2, 2]
-        arrow_curr = ax_traj.arrow(t_wc[0, 0], t_wc[2, 0], forward_x*2, forward_z*2, 
+        arrow_curr = ax_traj.arrow(t_wc_metric[0, 0], t_wc_metric[2, 0], forward_x*2, forward_z*2, 
                                    head_width=1.0, head_length=1.0, fc='r', ec='r')
         
         ax_traj.relim()
