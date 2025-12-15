@@ -232,6 +232,11 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     )
 
 
+   
+    if (not ok) or (inliers is None) or (len(inliers) < 4):
+        print(f"PnP failed / inliers too few: {0 if inliers is None else len(inliers)}")
+        prev_img = img
+        continue
     inliers = inliers.reshape(-1)
     P_in = P_tr[inliers]  # nin x2
     X_in = X_tr[inliers]  # nin x3
@@ -248,70 +253,89 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
 
     #nello stato abbiamo inserito i PUNTI 2D e 3D relativi a img (che useremo come prev_img al prossimo loop)
 
-
     # 3) TRACK CANDIDATES C (KLT)
     if S["C"].shape[1] > 0:
-        C_prev =  P2xN_to_klt(S["C"])  # Mx1x2
+        C_prev = P2xN_to_klt(S["C"])
 
-        C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, C_prev, None, **klt_params)
+        C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(
+            prev_img, img, C_prev, None, **klt_params
+        )
 
         if stc is not None:
             stc = stc.reshape(-1).astype(bool)
-            C_tr = C_tr.reshape(-1, 2)[stc]       # Mc x2, teniamo solo i candidate points che sono stati trackati con successo 
-            F_tr = S["F"].T[stc]                  # Mc x2, shrinkiamo F
-            T_tr = S["T"][:, stc]                 # 12 x Mc, shrinkiamo T
+
+            C_tr = C_tr.reshape(-1, 2)[stc]
+            F_tr = S["F"].T[stc]
+            T_tr = S["T"][:, stc]
 
             new_P = []
             new_X = []
+            promoted_idx = []
 
-            T_wc_mat = T_wc.reshape(4,4) 
+            T_wc_mat = T_wc.reshape(4, 4)
 
-            for c, f, T0_12 in zip(C_tr, F_tr, T_tr.T):
+            for idx, (c, f, T0_12) in enumerate(zip(C_tr, F_tr, T_tr.T)):
 
-                
-                T0 = np.eye(4)
-                T0[:3, :] = T0_12.reshape(3, 4)
+                T_wc0 = np.eye(4)
+                T_wc0[:3, :] = T0_12.reshape(3, 4)
 
-                
-                T_cw0 = np.linalg.inv(T0)
+                T_cw0 = np.linalg.inv(T_wc0)
                 T_cw1 = np.linalg.inv(T_wc_mat)
 
-                
                 P0 = K @ T_cw0[:3, :]
                 P1 = K @ T_cw1[:3, :]
 
-               
                 X_h = cv2.triangulatePoints(
                     P0, P1,
-                    f.reshape(2,1),
-                    c.reshape(2,1)
+                    f.reshape(2, 1),
+                    c.reshape(2, 1)
                 )
 
                 X = X_h[:3] / X_h[3]
-
-              
-                if X[2] <= 0:
-                    continue
-
                 new_P.append(c)
                 new_X.append(X.flatten())
+                promoted_idx.append(idx)
 
-          
+            
+
             if len(new_P) > 0:
-                new_P = np.array(new_P).T   # 2xN
-                new_X = np.array(new_X).T   # 3xN
-
+                new_P = np.array(new_P).T
+                new_X = np.array(new_X).T
                 S["P"] = np.hstack([S["P"], new_P])
                 S["X"] = np.hstack([S["X"], new_X])
 
-         
-            S["C"] = np.zeros((2,0))
-            S["F"] = np.zeros((2,0))
-            S["T"] = np.zeros((12,0))
+            if C_tr.shape[0] > 0:
+                keep_mask = np.ones(C_tr.shape[0], dtype=bool)
+                keep_mask[promoted_idx] = False  #aggiorno lo stato per C, F, T con solo i rimanenti C non trinagolati!!!
+                S["C"] = C_tr[keep_mask].T
+                S["F"] = F_tr[keep_mask].T
+                S["T"] = T_tr[:, keep_mask]
 
+    # 4) ADD NEW CANDIDATES
+    new_corners = cv2.goodFeaturesToTrack(img, maxCorners=300, qualityLevel=0.01, minDistance=min_distance)
+    if new_corners is not None:
+        cand = klt_to_P2xN(new_corners.astype(np.float32))  # 2xK
 
-        
+        mask = np.ones(cand.shape[1], dtype=bool)
 
+        if S["P"].shape[1] > 0:
+            diffP = cand[:, :, None] - S["P"][:, None, :]          # 2 x K x Np
+            distP_sq = np.sum(diffP**2, axis=0)                    # K x Np
+            min_distP_sq = np.min(distP_sq, axis=1)                # K
+            mask &= (min_distP_sq > (min_distance**2))
 
-        
-        
+        if S["C"].shape[1] > 0:
+            diffC = cand[:, :, None] - S["C"][:, None, :]          # 2 x K x Nc
+            distC_sq = np.sum(diffC**2, axis=0)                    # K x Nc
+            min_distC_sq = np.min(distC_sq, axis=1)                # K
+            mask &= (min_distC_sq > (min_distance**2))
+
+        C_new = cand[:, mask]                                      # 2xKkeep
+
+        if C_new.shape[1] > 0:
+            T12 = T_wc.reshape(4, 4)[:3, :].reshape(12, 1)
+            T_new = np.repeat(T12, C_new.shape[1], axis=1)
+
+            S["C"] = np.hstack([S["C"], C_new])
+            S["F"] = np.hstack([S["F"], C_new.copy()])
+            S["T"] = np.hstack([S["T"], T_new])
