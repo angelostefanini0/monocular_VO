@@ -14,7 +14,6 @@ ds = 2  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 # own_dataset_path = "/path/to/own_dataset"
 
 if ds == 0:
-    assert 'kitti_path' in locals(), "You must define kitti_path"
     kitti_path = r"./datasets/kitti05"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
@@ -25,7 +24,6 @@ if ds == 0:
         [0, 0, 1]
     ])
 elif ds == 1:
-    assert 'malaga_path' in locals(), "You must define malaga_path"
     malaga_path = r"./datasets/malaga"
     img_dir = os.path.join(malaga_path, 'malaga-urban-dataset-extract-07_rectified_800x600_Images')
     left_images = sorted(glob(os.path.join(img_dir, '*.png')))
@@ -36,10 +34,10 @@ elif ds == 1:
         [0, 0, 1]
     ])
 elif ds == 2:
-    assert 'parking_path' in locals(), "You must define parking_path"
+   
     parking_path = r"./datasets/parking"
     last_frame = 598
-    K = np.loadtxt(os.path.join(parking_path, 'K.txt'))
+    K = np.loadtxt(os.path.join(parking_path, 'K.txt'), delimiter=',', usecols=(0, 1, 2))
     ground_truth = np.loadtxt(os.path.join(parking_path, 'poses.txt'))
     ground_truth = ground_truth[:, [-9, -1]]
 elif ds == 3:
@@ -50,7 +48,7 @@ elif ds == 3:
 else:
     raise ValueError("Invalid dataset index")
 
-# --- PARAMETERS ---
+# --- PARAMETERS-
 #KLT PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
 klt_params=dict(
     winSize=(21,21),
@@ -64,6 +62,11 @@ min_distance=2
 #findEssentialMat PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
 prob_essent_mat=0.999
 thresh_essent_mat=1.0
+#PNP RANSAC PARAMETERS
+rep_error = 3.0 
+iter_count = 200
+confidence = 0.9999
+
 #PNP RANSAC PARAMETERS
 rep_error = 3.0 
 iter_count = 200
@@ -168,6 +171,11 @@ S["C"]=C
 S["F"]=C.copy()
 S["T"]=T
 
+    # Triangulation candidates
+    "C": np.zeros((2, 0), dtype=float),  # 2xM
+    "F": np.zeros((2, 0), dtype=float),  # 2xM
+    "T": np.zeros((12, 0), dtype=float)  # 12xM (pose at first obs)
+}
 
 
 
