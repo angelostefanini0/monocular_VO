@@ -1,14 +1,23 @@
+
 import os
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
 
+# --- VISUALIZATION FLAGS ---
+SHOW_TRAJECTORY = True
+SHOW_OPENCV_VIS = True
 
-
+# Flags
+DRAW_TRACKS_GREEN = True    # Keypoints usati per PnP
+DRAW_CANDS_RED = False       # Candidates in attesa
+DRAW_NEW_TRI_BLUE = False    # Appena triangolati
+DRAW_NEW_CANDS_CYAN = False  # Nuovi candidates
+DRAW_REPROJ_MAGENTA = True  # Verifica riproiezione 3D->2D
 
 # --- Setup ---
-ds = 2  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
+ds = 2 # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 
 # Define dataset paths
 # (Set these variables before running)
@@ -38,7 +47,6 @@ elif ds == 1:
         [0, 0, 1]
     ])
 elif ds == 2:
-   
     parking_path = r"./datasets/parking"
     last_frame = 598
     K = np.loadtxt(os.path.join(parking_path, 'K.txt'), delimiter=',', usecols=(0, 1, 2))
@@ -46,14 +54,12 @@ elif ds == 2:
     ground_truth = ground_truth[:, [-9, -1]]
 elif ds == 3:
     # Own Dataset
-    # TODO: define your own dataset and load K obtained from calibration of own camera
     assert 'own_dataset_path' in locals(), "You must define own_dataset_path"
-
 else:
     raise ValueError("Invalid dataset index")
 
-# --- PARAMETERS-
-
+# --- PARAMETERS ---
+#threshold for bearing angle function
 ANGLE_THRESHOLD = np.deg2rad(5.72)  # minimum bearing angle for triangulation
 #KLT PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
 klt_params=dict(
@@ -61,7 +67,7 @@ klt_params=dict(
     maxLevel=3,
     criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,30,0.01)
 )
-#gooìdFeaturesToTrack PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
+#goodFeaturesToTrack PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
 max_num_corners=1000
 quality_level=0.01
 min_distance=2
@@ -74,13 +80,10 @@ iter_count = 2000
 confidence = 0.99
 
 # --- Helper Functions ---
-#functions that transform keypoints from 2xN shape to Nx1x2 shape for KLT, and viceversa
-def P2xN_to_klt(P):return P.T.astype(np.float32).reshape(-1,1,2) 
-def klt_to_P2xN(Pklt):return Pklt.reshape(-1,2).T.astype(np.float32)
-
+def P2xN_to_klt(P): return P.T.astype(np.float32).reshape(-1, 1, 2)
+def klt_to_P2xN(Pklt): return Pklt.reshape(-1, 2).T.astype(np.float32)
 
 def bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
-
     T_cw_h = np.vstack([T_cw, [0, 0, 0, 1]])
     T_wc_h = np.linalg.inv(T_cw_h)
     T_wc = T_wc_h[:3, :]
@@ -89,14 +92,14 @@ def bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
     T_wc0_h = np.linalg.inv(T_cw0_h)
     T_wc0 = T_wc0_h[:3, :]
 
-    f_h = np.array([f[0], f[1], 1.0]) #f in homogeneous coordinates
-    c_h = np.array([c[0], c[1], 1.0]) #c in homogeneous coordinates
+    f_h = np.array([f[0], f[1], 1.0])
+    c_h = np.array([c[0], c[1], 1.0])
 
     v0_cam = np.linalg.inv(K) @ f_h
     v1_cam = np.linalg.inv(K) @ c_h
 
-    v0_cam /= np.linalg.norm(v0_cam) #normalized vector from f 
-    v1_cam /= np.linalg.norm(v1_cam) #normalized vector from c
+    v0_cam /= np.linalg.norm(v0_cam)
+    v1_cam /= np.linalg.norm(v1_cam)
 
     R0 = T_wc0[:3, :3]
     R1 = T_wc[:3, :3]
@@ -104,9 +107,8 @@ def bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
     v0_w = R0 @ v0_cam
     v1_w = R1 @ v1_cam
 
-    angle = np.arccos(np.clip(np.dot(v0_w, v1_w), -1.0, 1.0))   
-
-    return angle> ANGLE_THRESHOLD
+    angle = np.arccos(np.clip(np.dot(v0_w, v1_w), -1.0, 1.0))
+    return angle > ANGLE_THRESHOLD
 
 # --- State ---
 S = {
@@ -204,13 +206,35 @@ S["C"]=C
 S["F"]=C.copy()
 S["T"]=T
 
+# --- MATPLOTLIB INIT (TRAJECTORY) ---
+if SHOW_TRAJECTORY:
+    plt.ion()
+    fig_traj = plt.figure(figsize=(7, 7))
+    ax_traj = fig_traj.add_subplot(111)
+    
+    # Ground Truth
+    if 'ground_truth' in locals() and ground_truth is not None:
+        ax_traj.plot(ground_truth[:, 0], ground_truth[:, 1], 'k--', label="Ground Truth", alpha=0.5)
+
+    est_traj_x = []
+    est_traj_z = []
+    line_est, = ax_traj.plot([], [], 'b.-', label="Estimated PnP")
+    arrow_curr = None
+    
+    ax_traj.set_xlabel("X (m)")
+    ax_traj.set_ylabel("Z (m)")
+    ax_traj.set_title("Trajectory (Top-Down View)")
+    ax_traj.legend()
+    ax_traj.grid(True)
+    ax_traj.axis('equal')
 
 prev_img = img1
+
 # --- Continuous operation ---
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
-    print(f"\n\nProcessing frame {i}\n=====================")
+    print(f"\nProcessing frame {i}")
 
-    # LOAD IMAGE
+    # --- 0. LOAD IMAGE ---
     if ds == 0:
         image_path = os.path.join(kitti_path, '05', 'image_0', f"{i:06d}.png")
     elif ds == 1:
@@ -227,147 +251,206 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
         print(f"Warning: could not read {image_path}")
         continue
 
-    # SHOW IMAGE 
-    cv2.imshow("Input image", img)
-    key = cv2.waitKey(1) & 0xFF
-    if key == 27:  # ESC
-        break
-   
-    # 1) - track keypoints from previous frame, that are already associated to a landmark
-    P_prev =  P2xN_to_klt(S["P"]) # Nx1x2
-    X_prev = S["X"].T.astype(np.float32) # Nx3
-    #track with klt
+    # Prepare Visualization Image
+    vis_img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    n_triangulated = 0
+    n_new_candidates = 0
+
+    # --- 1. TRACK KEYPOINTS (LANDMARKS) ---
+    P_prev = P2xN_to_klt(S["P"])
+    X_prev = S["X"].T.astype(np.float32)
+    
     P_tr, st, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, P_prev, None, **klt_params)
     st = st.reshape(-1).astype(bool)
-    #filter out keypoints for which tracking fails, and also corresponding landmarks
-    P_tr = P_tr.reshape(-1, 2)[st] # Nx2
-    X_tr = X_prev[st] # Nx3
-
-    print(f"Tracked keypoints: {P_tr.shape[0]}")
     
+    P_tr_valid = P_tr.reshape(-1, 2)[st] #contiene i punti 2d trackati in curr_img
+    X_tr = X_prev[st]
+    P_prev_valid = P_prev[st].reshape(-1, 2) #contiene i punti 2d i prev_img che sono riuscito a trackare
+    print(f"NUM KEYPOINTS: {len(X_tr)}")
 
-
-    # 2) - LOCALIZATION: exploiting the now established 3D-2D correspondences between landmarks and
-    #keypoints in the current frame, with PnP + RANSAC we retrieve the pose of the current frame wrt the world
+    # --- 2. LOCALIZATION (PnP + RANSAC) ---
     ok, rvec, tvec, inliers = cv2.solvePnPRansac(
         objectPoints=X_tr,
-        imagePoints=P_tr,
+        imagePoints=P_tr_valid,
         cameraMatrix=K,
         distCoeffs=None,
-        reprojectionError=rep_error, #defines how far from the model points start to be considered outliers
-        iterationsCount=iter_count, #max number of iteration of RANSAC
+        reprojectionError=rep_error,
+        iterationsCount=iter_count,
         confidence=confidence,
         flags=cv2.SOLVEPNP_ITERATIVE
     )
 
     if (not ok) or (inliers is None) or (len(inliers) < 4):
-        print(f"PnP failed / inliers too few: {0 if inliers is None else len(inliers)}")
+        print("PnP failed")
         prev_img = img
         continue
-
+    print(f"NUM INLIERS: {len(inliers)}")
+    print (f"Percentage: {len(inliers)/len(X_tr)}")
     inliers = inliers.reshape(-1)
-    #filter out outliers
-    print(f"PnP inliers: {len(inliers)} ")
-    P_in = P_tr[inliers] # Nx2
-    X_in = X_tr[inliers] # Nx3
+    P_in = P_tr_valid[inliers]
+    X_in = X_tr[inliers]
+    P_prev_in = P_prev_valid[inliers]
 
     R_cw, _ = cv2.Rodrigues(rvec)
-    T_cw = np.hstack([R_cw,tvec])
+    T_cw = np.hstack([R_cw, tvec])
 
-    # update 2D keypoints and 3D landmarks of the state, to the current frame
     S["P"] = P_in.T
     S["X"] = X_in.T
 
+    # --- PLOT: TRAJECTORY UPDATE (Matplotlib) ---
+    if SHOW_TRAJECTORY:
+        # Camera pose in World frame: T_wc = inv(T_cw)
+        R_wc = R_cw.T
+        t_wc = -R_wc @ tvec
+        
+        est_traj_x.append(t_wc[0, 0])
+        est_traj_z.append(t_wc[2, 0])
+        
+        # Update plot every frame (or utilize modulus for speed)
+        line_est.set_data(est_traj_x, est_traj_z)
+        
+        if arrow_curr: arrow_curr.remove()
+        
+        # Forward vector (Z-axis of camera in world frame) is the 3rd column of R_wc
+        forward_x = R_wc[0, 2]
+        forward_z = R_wc[2, 2]
+        arrow_curr = ax_traj.arrow(t_wc[0, 0], t_wc[2, 0], forward_x*2, forward_z*2, 
+                                   head_width=1.0, head_length=1.0, fc='r', ec='r')
+        
+        ax_traj.relim()
+        ax_traj.autoscale_view()
+        fig_traj.canvas.draw()
+        fig_traj.canvas.flush_events()
 
-    # 3) - 3D MAP COUNTINUOUS UPDATE: in this section we analyze each element of C, which is the set of candidates
-    #keypoints. If they satisfy approrpiate conditions, they are triangulated and moved from C to P, and added to X
+    # --- PLOT: OPENCV VISUALIZATION ---
+    if SHOW_OPENCV_VIS:
+        
+        # A. Keypoints (GREEN)
+        if DRAW_TRACKS_GREEN:
+            for prev_pt, curr_pt in zip(P_prev_in, P_in):
+                cv2.line(vis_img, (int(prev_pt[0]), int(prev_pt[1])), (int(curr_pt[0]), int(curr_pt[1])), (0, 255, 0), 1)
+                cv2.circle(vis_img, (int(curr_pt[0]), int(curr_pt[1])), 3, (0, 255, 0), -1)
+
+        # B. Reprojection Check (MAGENTA)
+        if DRAW_REPROJ_MAGENTA:
+            points_reproj, _ = cv2.projectPoints(X_in, rvec, tvec, K, None)
+            points_reproj = points_reproj.reshape(-1, 2)
+            for pt in points_reproj:
+                cv2.circle(vis_img, (int(pt[0]), int(pt[1])), 2, (255, 0, 255), -1)
+
+    # --- 3. CANDIDATE TRACKING & TRIANGULATION ---
     if S["C"].shape[1] > 0:
-        C_prev =  P2xN_to_klt(S["C"]) # Mx1x2
-        #track the candidates of the previous frame to the current one
+        C_prev = P2xN_to_klt(S["C"])
         C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, C_prev, None, **klt_params)
-
-        C_tr = klt_to_P2xN(C_tr)  # 2xM
+        C_tr = klt_to_P2xN(C_tr)
 
         if stc is not None:
             stc = stc.reshape(-1).astype(bool)
+            C_tr = C_tr[:, stc]
+            C_prev_valid = C_prev[stc].reshape(-1, 2) # For plotting
 
-            # C_tr è già Nx2 perché lo usi nei loop
-            C_tr = C_tr[:,stc]
+            # C. Candidates (RED)
+            if SHOW_OPENCV_VIS and DRAW_CANDS_RED:
+                for prev_pt, curr_pt in zip(C_prev_valid, C_tr.T):
+                    cv2.line(vis_img, (int(prev_pt[0]), int(prev_pt[1])), (int(curr_pt[0]), int(curr_pt[1])), (0, 0, 255), 1)
+                    cv2.circle(vis_img, (int(curr_pt[0]), int(curr_pt[1])), 2, (0, 0, 255), -1)
 
-            # F e T devono restare 2xM e 12xM
-            F_tr = S["F"][:, stc]     # 2 x M_good
-            T_tr = S["T"][:, stc]     # 12 x M_good
+            F_tr = S["F"][:, stc]
+            T_tr = S["T"][:, stc]
 
             new_P = []
             new_X = []
-            promoted_idx=[]
-            #now we loop over all elements of C and, if it's appropriate, triangulate them
-            #stiamo consideranod T_CW_f
-            for idx in range(C_tr.shape[1]):
-                c = C_tr[:, idx]        # shape (2,)
-                f = F_tr[:, idx]        # shape (2,)
-                T_CW_fvec = T_tr[:, idx]  # shape (12,)
-                        
+            promoted_idx = []
 
-                T_cw0 = T_CW_fvec.reshape(3, 4)
-    
-                if not bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
-                    continue         
-              
-              
+            for idx in range(C_tr.shape[1]):
+                c = C_tr[:, idx]
+                f = F_tr[:, idx]
+                T_CW_fvec = T_tr[:, idx]
                 
-                #compute projection matrices
+                T_cw0 = T_CW_fvec.reshape(3, 4)
+
+                if not bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
+                    continue
+
                 P0 = K @ T_cw0
                 P1 = K @ T_cw
-                X_h = cv2.triangulatePoints(P0, P1,f.reshape(2,1),c.reshape(2,1))
+                X_h = cv2.triangulatePoints(P0, P1, f.reshape(2, 1), c.reshape(2, 1))
                 X = X_h[:3] / X_h[3]
 
-            
+
                 new_P.append(c)
                 new_X.append(X.flatten())
                 promoted_idx.append(idx)
 
             if len(new_P) > 0:
-                new_P = np.array(new_P).T # 2xN
-                new_X = np.array(new_X).T # 3xN
-                S["P"] = np.hstack([S["P"], new_P])
-                S["X"] = np.hstack([S["X"], new_X])
-                #remove triangulated points from C, F and T
-            if C_tr.shape[0] > 0:
-                M_good = C_tr.shape[1]          # numero di candidate
-                keep_mask = np.ones(M_good, dtype=bool)
+                new_P_arr = np.array(new_P).T
+                new_X_arr = np.array(new_X).T
+                S["P"] = np.hstack([S["P"], new_P_arr])
+                S["X"] = np.hstack([S["X"], new_X_arr])
+                n_triangulated = new_P_arr.shape[1]
+                
+                # D. New Triangulations (BLUE)
+                if SHOW_OPENCV_VIS and DRAW_NEW_TRI_BLUE:
+                    for pt in new_P_arr.T:
+                        cv2.circle(vis_img, (int(pt[0]), int(pt[1])), 5, (255, 0, 0), 2)
+
+            if C_tr.shape[1] > 0:
+                keep_mask = np.ones(C_tr.shape[1], dtype=bool)
                 keep_mask[promoted_idx] = False
-                S["C"] = C_tr[:, keep_mask]     # 2 x M_remaining
-                S["F"] = F_tr[:, keep_mask]     # 2 x M_remaining
-                S["T"] = T_tr[:, keep_mask]     # 12 x M_remaining
+                S["C"] = C_tr[:, keep_mask]
+                S["F"] = F_tr[:, keep_mask]
+                S["T"] = T_tr[:, keep_mask]
 
-
-    # 4) ADD NEW CANDIDATES
-    new_corners = cv2.goodFeaturesToTrack(img, max_num_corners,quality_level,min_distance)
+    # --- 4. ADD NEW CANDIDATES ---
+    new_corners = cv2.goodFeaturesToTrack(img, max_num_corners, quality_level, min_distance)
     if new_corners is not None:
-        cand = klt_to_P2xN(new_corners.astype(np.float32))  # 2xK
-
+        cand = klt_to_P2xN(new_corners.astype(np.float32))
         mask = np.ones(cand.shape[1], dtype=bool)
 
         if S["P"].shape[1] > 0:
-            diffP = cand[:, :, None] - S["P"][:, None, :]          # 2 x K x Np
-            distP_sq = np.sum(diffP**2, axis=0)                    # K x Np
-            min_distP_sq = np.min(distP_sq, axis=1)                # K
-            mask &= (min_distP_sq > (min_distance**2))
+            diffP = cand[:, :, None] - S["P"][:, None, :]
+            mask &= (np.min(np.sum(diffP**2, axis=0), axis=1) > min_distance**2)
 
         if S["C"].shape[1] > 0:
-            diffC = cand[:, :, None] - S["C"][:, None, :]          # 2 x K x Nc
-            distC_sq = np.sum(diffC**2, axis=0)                    # K x Nc
-            min_distC_sq = np.min(distC_sq, axis=1)                # K
-            mask &= (min_distC_sq > (min_distance**2))
+            diffC = cand[:, :, None] - S["C"][:, None, :]
+            mask &= (np.min(np.sum(diffC**2, axis=0), axis=1) > min_distance**2)
 
-        C_new = cand[:, mask]                                      # 2xKkeep
+        C_new = cand[:, mask]
 
         if C_new.shape[1] > 0:
             T12 = T_cw.reshape(12, 1)
-          
             T_new = np.repeat(T12, C_new.shape[1], axis=1)
 
             S["C"] = np.hstack([S["C"], C_new])
             S["F"] = np.hstack([S["F"], C_new.copy()])
             S["T"] = np.hstack([S["T"], T_new])
+            n_new_candidates = C_new.shape[1]
+            
+            # E. New Candidates (CYAN)
+            if SHOW_OPENCV_VIS and DRAW_NEW_CANDS_CYAN:
+                 for pt in C_new.T:
+                    cv2.circle(vis_img, (int(pt[0]), int(pt[1])), 2, (255, 255, 0), -1)
+
+    # --- FINAL VISUALIZATION (LEGEND & SHOW) ---
+    if SHOW_OPENCV_VIS:
+        x_leg, y_leg, gap = 10, 20, 20
+        font, scale = cv2.FONT_HERSHEY_SIMPLEX, 0.5
+        
+        cv2.putText(vis_img, f"Tracked (P): {S['P'].shape[1]}", (x_leg, y_leg), font, scale, (0, 255, 0), 1, cv2.LINE_AA)
+        if DRAW_REPROJ_MAGENTA:
+            cv2.putText(vis_img, f"Reprojected", (x_leg, y_leg+gap), font, scale, (255, 0, 255), 1, cv2.LINE_AA)
+        cv2.putText(vis_img, f"Candidates (C): {S['C'].shape[1]}", (x_leg, y_leg+2*gap), font, scale, (0, 0, 255), 1, cv2.LINE_AA)
+        cv2.putText(vis_img, f"Triangulated: +{n_triangulated}", (x_leg, y_leg+3*gap), font, scale, (255, 0, 0), 1, cv2.LINE_AA)
+        cv2.putText(vis_img, f"New Cands: +{n_new_candidates}", (x_leg, y_leg+4*gap), font, scale, (255, 255, 0), 1, cv2.LINE_AA)
+        cv2.putText(vis_img, f"Frame: {i}", (x_leg, y_leg+5*gap+5), font, scale, (255, 255, 255), 1, cv2.LINE_AA)
+
+        cv2.imshow("Visual Odometry", vis_img)
+    
+    prev_img = img 
+    
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27: break
+
+cv2.destroyAllWindows()
+plt.ioff()
+plt.show()
