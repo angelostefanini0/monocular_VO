@@ -9,7 +9,7 @@ from glob import glob
 SHOW_TRAJECTORY = True
 SHOW_OPENCV_VIS = True
 
-# Flags
+# Flags per elementi grafici OpenCV
 DRAW_TRACKS_GREEN = True    # Keypoints usati per PnP
 DRAW_CANDS_RED = False       # Candidates in attesa
 DRAW_NEW_TRI_BLUE = False    # Appena triangolati
@@ -17,7 +17,7 @@ DRAW_NEW_CANDS_CYAN = False  # Nuovi candidates
 DRAW_REPROJ_MAGENTA = True  # Verifica riproiezione 3D->2D
 
 # --- Setup ---
-ds = 2 # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
+ds = 1 # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 
 # Define dataset paths
 # (Set these variables before running)
@@ -27,26 +27,44 @@ ds = 2 # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 # own_dataset_path = "/path/to/own_dataset"
 
 if ds == 0:
-    kitti_path = r"./datasets/kitti05"
+    ANGLE_THRESHOLD = np.deg2rad(0.1) 
+    kitti_path = r"./datasets/kitti05/kitti"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
-    last_frame = 4540
+    last_frame = 2759
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
         [0, 0, 1]
     ])
 elif ds == 1:
-    malaga_path = r"./datasets/malaga"
-    img_dir = os.path.join(malaga_path, 'malaga-urban-dataset-extract-07_rectified_800x600_Images')
-    left_images = sorted(glob(os.path.join(img_dir, '*.png')))
-    last_frame = len(left_images)
+    malaga_path = r"./datasets/malaga-urban-dataset-extract-07/malaga-urban-dataset-extract-07"
+    ANGLE_THRESHOLD = np.deg2rad(0.01)
+    img_dir = os.path.join(
+        malaga_path,
+        "malaga-urban-dataset-extract-07_rectified_800x600_Images"
+    )
+
+   
+    left_images = sorted([
+        os.path.join(img_dir, f)
+        for f in os.listdir(img_dir)
+        if f.endswith("_left.jpg")
+    ])
+
+    print("Malaga LEFT images found:", len(left_images))
+    assert len(left_images) > 10, "No left images found in Malaga dataset!"
+
+    last_frame = len(left_images) - 1
+
     K = np.array([
         [621.18428, 0, 404.0076],
         [0, 621.18428, 309.05989],
         [0, 0, 1]
     ])
+
 elif ds == 2:
+    ANGLE_THRESHOLD = np.deg2rad(5.72) 
     parking_path = r"./datasets/parking"
     last_frame = 598
     K = np.loadtxt(os.path.join(parking_path, 'K.txt'), delimiter=',', usecols=(0, 1, 2))
@@ -59,24 +77,15 @@ else:
     raise ValueError("Invalid dataset index")
 
 # --- PARAMETERS ---
-#threshold for bearing angle function
-ANGLE_THRESHOLD = np.deg2rad(5.72)  # minimum bearing angle for triangulation
-#KLT PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
-klt_params=dict(
-    winSize=(21,21),
-    maxLevel=3,
-    criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,30,0.01)
-)
-#goodFeaturesToTrack PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
-max_num_corners=1000
-quality_level=0.01
-min_distance=2
-#findEssentialMat PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
-prob_essent_mat=0.999
-thresh_essent_mat=1.0
-#PNP RANSAC PARAMETERS
-rep_error = 3.0 
-iter_count = 2000
+
+klt_params = dict(winSize=(21, 21), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
+max_num_corners = 1000
+quality_level = 0.01
+min_distance = 2
+prob_essent_mat = 0.999
+thresh_essent_mat = 1.0
+rep_error = 3.0
+iter_count = 200
 confidence = 0.99
 
 # --- Helper Functions ---
@@ -112,18 +121,15 @@ def bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
 
 # --- State ---
 S = {
-    # Localization
-    "P": np.zeros((2, 0), dtype=float),  # 2xN - image coordinates of tracked features
-    "X": np.zeros((3, 0), dtype=float),  # 3xN - world coordinates of tracked features
-
-    # Triangulation candidates
-    "C": np.zeros((2, 0), dtype=float),  # 2xM - position of candidate features in the current frame (image coordinates)
-    "F": np.zeros((2, 0), dtype=float),  # 2xM - position of candidate features in the first frame they were observed (image coordinates)
-    "T": np.zeros((12, 0), dtype=float)  # 12xM - pose of the frame at which candidate features were observed firstly observed
+    "P": np.zeros((2, 0), dtype=float),
+    "X": np.zeros((3, 0), dtype=float),
+    "C": np.zeros((2, 0), dtype=float),
+    "F": np.zeros((2, 0), dtype=float),
+    "T": np.zeros((12, 0), dtype=float)
 }
 
 # --- Bootstrap ---
-bootstrap_frames = [0, 2]  # example: you must set actual bootstrap indices
+bootstrap_frames = [0, 2]
 
 if ds == 0:
     img0 = cv2.imread(os.path.join(kitti_path, '05', 'image_0', f"{bootstrap_frames[0]:06d}.png"), cv2.IMREAD_GRAYSCALE)
@@ -135,76 +141,58 @@ elif ds == 2:
     img0 = cv2.imread(os.path.join(parking_path, 'images', f"img_{bootstrap_frames[0]:05d}.png"), cv2.IMREAD_GRAYSCALE)
     img1 = cv2.imread(os.path.join(parking_path, 'images', f"img_{bootstrap_frames[1]:05d}.png"), cv2.IMREAD_GRAYSCALE)
 elif ds == 3:
-    # Load images from own dataset
     img0 = cv2.imread(os.path.join(own_dataset_path, f"{bootstrap_frames[0]:06d}.png"), cv2.IMREAD_GRAYSCALE)
     img1 = cv2.imread(os.path.join(own_dataset_path, f"{bootstrap_frames[1]:06d}.png"), cv2.IMREAD_GRAYSCALE)
-else:
-    raise ValueError("Invalid dataset index")
 
-# 1) - harris to detect keypoints in first keyframe (img0)
-pts1=cv2.goodFeaturesToTrack(img0,max_num_corners,quality_level,min_distance) #Nx1x2
-n=0 if pts1 is None else pts1.shape[0]
-print("Number of detected features in keyframe 1: ", n)
-pts1=pts1.astype(np.float32)
+# 1) Harris
+pts1 = cv2.goodFeaturesToTrack(img0, max_num_corners, quality_level, min_distance)
+pts1 = pts1.astype(np.float32)
 
-# 2) - KLT to track the keypoints to the second keyframe (img1)
-pts2,status,err=cv2.calcOpticalFlowPyrLK(img0,img1,pts1,None,**klt_params)
-#Filter valid tracks
-status=status.reshape(-1)
-pts1_tracked=pts1[status==1]
-pts2_tracked=pts2[status==1]
-#reshape to 2xN
-keypoints1=klt_to_P2xN(pts1_tracked)
-keypoints2=klt_to_P2xN(pts2_tracked)
+# 2) KLT
+pts2, status, err = cv2.calcOpticalFlowPyrLK(img0, img1, pts1, None, **klt_params)
+status = status.reshape(-1)
+pts1_tracked = pts1[status == 1]
+pts2_tracked = pts2[status == 1]
+keypoints1 = klt_to_P2xN(pts1_tracked)
+keypoints2 = klt_to_P2xN(pts2_tracked)
 
-# 3) - now we have the 2D-2D point correspondences: we can apply 8-point RANSAC to retrieve the pose of the second keyframe
-#origin of world frame is assumed to coincide with the pose of the first keyframe
-#findEssentialMat wants Nx2
-corr1=keypoints1.T.astype(np.float32)
-corr2=keypoints2.T.astype(np.float32)
+# 3) RANSAC Essential Matrix
+corr1 = keypoints1.T.astype(np.float32)
+corr2 = keypoints2.T.astype(np.float32)
+E, maskE = cv2.findEssentialMat(corr1, corr2, K, method=cv2.RANSAC, prob=prob_essent_mat, threshold=thresh_essent_mat)
+maskE = maskE.reshape(-1).astype(bool)
+corr1_inliers = corr1[maskE]
+corr2_inliers = corr2[maskE]
+_, R, t, maskPose = cv2.recoverPose(E, corr1_inliers, corr2_inliers, K)
+maskPose = maskPose.reshape(-1).astype(bool)
+corr1_final = corr1_inliers[maskPose]
+corr2_final = corr2_inliers[maskPose]
 
-E,maskE=cv2.findEssentialMat(corr1,corr2,K,method=cv2.RANSAC,prob=prob_essent_mat,threshold=thresh_essent_mat)
-maskE=maskE.reshape(-1).astype(bool)
-#we take only the inlier correspondences
-corr1_inliers=corr1[maskE]
-corr2_inliers=corr2[maskE]
-#decompose E into R and t
-_,R,t,maskPose=cv2.recoverPose(E,corr1_inliers,corr2_inliers,K)
-#filter again good correspondences
-maskPose=maskPose.reshape(-1).astype(bool)
-corr1_final=corr1_inliers[maskPose]
-corr2_final=corr2_inliers[maskPose]
+t = t.reshape(3, 1)
+T_CW2 = np.hstack((R, t)).astype(np.float64)
 
-t=t.reshape(3,1)
-T_CW2=np.hstack((R,t)).astype(np.float64) #3x4
+# 4) Triangulate
+P1 = K @ np.hstack((np.eye(3), np.zeros((3, 1))))
+P2 = K @ np.hstack((R, t))
+points1 = corr1_final.T
+points2 = corr2_final.T
+X_homogeneous = cv2.triangulatePoints(P1, P2, points1, points2)
+X = (X_homogeneous[:3, :] / X_homogeneous[3:4, :]).astype(np.float32)
 
-# 4) - finally, we can perform triangulation, and thus construnct the first point cloud
-#compute the projection matrices
-P1=K@np.hstack((np.eye(3),np.zeros((3,1))))
-P2=K@np.hstack((R,t))
-#triangulatePoints wants 2xN
-points1=corr1_final.T
-points2=corr2_final.T
-X_homogeneous=cv2.triangulatePoints(P1,P2,points1,points2)
-X=(X_homogeneous[:3,:]/X_homogeneous[3:4,:]).astype(np.float32)
-
-# 5) - set up of the state
-S["P"]=points2
-S["X"]=X
-#to create the candidates set C, we must detect new features, and check that they are not already in P
-cand=cv2.goodFeaturesToTrack(img1,max_num_corners,quality_level,min_distance)
-cand=klt_to_P2xN(cand)
-#to ensures points in C are not redundant with ones in P, we perform a minimum distance check
-diff=cand[:,:,None]-points2[:,None,:]
-dist_sq=np.sum(diff**2,axis=0) #distance of each candidate to all points in P
-min_dist_sq=np.min(dist_sq,axis=1) #distance of each candidate to the closest point in P
-#Keep only candidates farther than min_distance
-mask=min_dist_sq>(min_distance**2)
-C=cand[:,mask]
-T=np.repeat(T_CW2.reshape(12,1),C.shape[1],axis=1)
-S["C"]=C
-S["F"]=C.copy()
-S["T"]=T
+# 5) Setup State
+S["P"] = points2
+S["X"] = X
+cand = cv2.goodFeaturesToTrack(img1, max_num_corners, quality_level, min_distance)
+cand = klt_to_P2xN(cand)
+diff = cand[:, :, None] - points2[:, None, :]
+dist_sq = np.sum(diff**2, axis=0)
+min_dist_sq = np.min(dist_sq, axis=1)
+mask = min_dist_sq > (min_distance**2)
+C = cand[:, mask]
+T = np.repeat(T_CW2.reshape(12, 1), C.shape[1], axis=1)
+S["C"] = C
+S["F"] = C.copy()
+S["T"] = T
 
 # --- MATPLOTLIB INIT (TRAJECTORY) ---
 if SHOW_TRAJECTORY:
@@ -263,9 +251,9 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     P_tr, st, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, P_prev, None, **klt_params)
     st = st.reshape(-1).astype(bool)
     
-    P_tr_valid = P_tr.reshape(-1, 2)[st] #contiene i punti 2d trackati in curr_img
+    P_tr_valid = P_tr.reshape(-1, 2)[st]
     X_tr = X_prev[st]
-    P_prev_valid = P_prev[st].reshape(-1, 2) #contiene i punti 2d i prev_img che sono riuscito a trackare
+    P_prev_valid = P_prev[st].reshape(-1, 2)
     print(f"NUM KEYPOINTS: {len(X_tr)}")
 
     # --- 2. LOCALIZATION (PnP + RANSAC) ---
@@ -377,6 +365,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 X_h = cv2.triangulatePoints(P0, P1, f.reshape(2, 1), c.reshape(2, 1))
                 X = X_h[:3] / X_h[3]
 
+                if X[2] <= 0: continue
 
                 new_P.append(c)
                 new_X.append(X.flatten())
