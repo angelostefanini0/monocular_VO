@@ -67,11 +67,6 @@ rep_error = 3.0
 iter_count = 200
 confidence = 0.9999
 
-#PNP RANSAC PARAMETERS
-rep_error = 3.0 
-iter_count = 200
-confidence = 0.9999
-
 # --- Helper Functions ---
 #functions that transform keypoints from 2xN shape to Nx1x2 shape for KLT, and viceversa
 def P2xN_to_klt(P):return P.T.astype(np.float32).reshape(-1,1,2) 
@@ -110,6 +105,7 @@ else:
 
 # 1) - harris to detect keypoints in first keyframe (img0)
 pts1=cv2.goodFeaturesToTrack(img0,max_num_corners,quality_level,min_distance) #Nx1x2
+
 pts1=pts1.astype(np.float32)
 
 # 2) - KLT to track the keypoints to the second keyframe (img1)
@@ -171,15 +167,13 @@ S["C"]=C
 S["F"]=C.copy()
 S["T"]=T
 
-    # Triangulation candidates
-    "C": np.zeros((2, 0), dtype=float),  # 2xM
-    "F": np.zeros((2, 0), dtype=float),  # 2xM
-    "T": np.zeros((12, 0), dtype=float)  # 12xM (pose at first obs)
-}
+
+
 
 
 
 prev_img = img1
+
 # --- Continuous operation ---
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"\n\nProcessing frame {i}\n=====================")
@@ -220,6 +214,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
 
     st = st.reshape(-1).astype(bool)
     P_tr = P_tr.reshape(-1, 2)[st]  # Nx2
+    print(f"Tracked points: {P_tr.shape[0]}")
     X_tr = X_prev[st]               # Nx3
 
     
@@ -258,13 +253,65 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     if S["C"].shape[1] > 0:
         C_prev =  P2xN_to_klt(S["C"])  # Mx1x2
 
-        C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, C_prev, None, *klt_params)
-    
-        stc = stc.reshape(-1).astype(bool)
-        C_tr = C_tr.reshape(-1, 2)[stc]       # Mc x2, teniamo solo i candidate points che sono stati trackati con successo 
-        F_tr = S["F"].T[stc]                  # Mc x2, shrinkiamo F
-        T_tr = S["T"][:, stc]                 # 12 x Mc, shrinkiamo T
+        C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, C_prev, None, **klt_params)
 
-        S["C"] = C_tr.T                       #aggiorniamo lo stato (C, F, T)
-        S["F"] = F_tr.T
-        S["T"] = T_tr
+        if stc is not None:
+            stc = stc.reshape(-1).astype(bool)
+            C_tr = C_tr.reshape(-1, 2)[stc]       # Mc x2, teniamo solo i candidate points che sono stati trackati con successo 
+            F_tr = S["F"].T[stc]                  # Mc x2, shrinkiamo F
+            T_tr = S["T"][:, stc]                 # 12 x Mc, shrinkiamo T
+
+            new_P = []
+            new_X = []
+
+            T_wc_mat = T_wc.reshape(4,4) 
+
+            for c, f, T0_12 in zip(C_tr, F_tr, T_tr.T):
+
+                
+                T0 = np.eye(4)
+                T0[:3, :] = T0_12.reshape(3, 4)
+
+                
+                T_cw0 = np.linalg.inv(T0)
+                T_cw1 = np.linalg.inv(T_wc_mat)
+
+                
+                P0 = K @ T_cw0[:3, :]
+                P1 = K @ T_cw1[:3, :]
+
+               
+                X_h = cv2.triangulatePoints(
+                    P0, P1,
+                    f.reshape(2,1),
+                    c.reshape(2,1)
+                )
+
+                X = X_h[:3] / X_h[3]
+
+              
+                if X[2] <= 0:
+                    continue
+
+                new_P.append(c)
+                new_X.append(X.flatten())
+
+          
+            if len(new_P) > 0:
+                new_P = np.array(new_P).T   # 2xN
+                new_X = np.array(new_X).T   # 3xN
+
+                S["P"] = np.hstack([S["P"], new_P])
+                S["X"] = np.hstack([S["X"], new_X])
+
+         
+            S["C"] = np.zeros((2,0))
+            S["F"] = np.zeros((2,0))
+            S["T"] = np.zeros((12,0))
+
+
+        
+
+
+        
+        
