@@ -1,6 +1,7 @@
 import os
 import cv2
 import numpy as np
+import matplotlib.pyplot as plt
 from glob import glob
 
 # --- Setup ---
@@ -105,7 +106,8 @@ else:
 
 # 1) - harris to detect keypoints in first keyframe (img0)
 pts1=cv2.goodFeaturesToTrack(img0,max_num_corners,quality_level,min_distance) #Nx1x2
-
+n=0 if pts1 is None else pts1.shape[0]
+print("Number of detected features in keyframe 1: ", n)
 pts1=pts1.astype(np.float32)
 
 # 2) - KLT to track the keypoints to the second keyframe (img1)
@@ -117,6 +119,27 @@ pts2_tracked=pts2[status==1]
 #reshape to 2xN
 keypoints1=klt_to_P2xN(pts1_tracked)
 keypoints2=klt_to_P2xN(pts2_tracked)
+
+# ------------------ VISUALIZATION ------------------
+#Create color image for plotting
+img_vis=cv2.cvtColor(img0,cv2.COLOR_GRAY2BGR)
+
+#Plot all detected keypoints (green)
+for p in pts1:
+    x,y=int(p[0,0]),int(p[0,1])
+    cv2.circle(img_vis,(x,y),2,(0,255,0),-1)
+
+#Plot only successfully tracked keypoints (red)
+for p in pts1_tracked:
+    x,y=int(p[0,0]),int(p[0,1])
+    cv2.circle(img_vis,(x,y),2,(255,0,0),-1)
+
+plt.figure(figsize=(8,6))
+plt.imshow(img_vis)
+plt.title("Keypoints in img0: green=detected, red=tracked to img1")
+plt.axis("off")
+plt.show()
+# --------------------------------------------------
 
 # 3) - now we have the 2D-2D point correspondences: we can apply 8-point RANSAC to retrieve the pose of the second keyframe
 #origin of world frame is assumed to coincide with the pose of the first keyframe
@@ -168,19 +191,12 @@ S["F"]=C.copy()
 S["T"]=T
 
 
-
-
-
-
 prev_img = img1
-
 # --- Continuous operation ---
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"\n\nProcessing frame {i}\n=====================")
 
-   
-    # LOAD IMAGE 
-   
+    # LOAD IMAGE
     if ds == 0:
         image_path = os.path.join(kitti_path, '05', 'image_0', f"{i:06d}.png")
     elif ds == 1:
@@ -197,113 +213,103 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
         print(f"Warning: could not read {image_path}")
         continue
 
-    
     # SHOW IMAGE 
     cv2.imshow("Input image", img)
     key = cv2.waitKey(1) & 0xFF
     if key == 27:  # ESC
         break
-
    
-    # 1) TRACK ACTIVE KEYPOINTS P (KLT)
-    P_prev =  P2xN_to_klt(S["P"])  # Nx1x2
-    X_prev = S["X"].T.astype(np.float32)                    # Nx3
-
+    # 1) - track keypoints from previous frame, that are already associated to a landmark
+    P_prev =  P2xN_to_klt(S["P"]) # Nx1x2
+    X_prev = S["X"].T.astype(np.float32) # Nx3
+    #track with klt
     P_tr, st, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, P_prev, None, **klt_params)
-    
-
     st = st.reshape(-1).astype(bool)
-    P_tr = P_tr.reshape(-1, 2)[st]  # Nx2
-    print(f"Tracked points: {P_tr.shape[0]}")
-    X_tr = X_prev[st]               # Nx3
+    #filter out keypoints for which tracking fails, and also corresponding landmarks
+    P_tr = P_tr.reshape(-1, 2)[st] # Nx2
+    X_tr = X_prev[st] # Nx3
 
-    
+    print(f"Tracked keypoints: {P_tr.shape[0]}")
 
-    # 2) PnP + RANSAC (2D-3D) -> Pose
+    # 2) - LOCALIZATION: exploiting the now established 3D-2D correspondences between landmarks and
+    #keypoints in the current frame, with PnP + RANSAC we retrieve the pose of the current frame wrt the world
     ok, rvec, tvec, inliers = cv2.solvePnPRansac(
         objectPoints=X_tr,
         imagePoints=P_tr,
         cameraMatrix=K,
         distCoeffs=None,
-        reprojectionError=rep_error, #when we consider a point inlier or not
-        iterationsCount=iter_count, #number of random subsets
+        reprojectionError=rep_error, #defines how far from the model points start to be considered outliers
+        iterationsCount=iter_count, #max number of iteration of RANSAC
         confidence=confidence,
         flags=cv2.SOLVEPNP_ITERATIVE
     )
 
-
-   
     if (not ok) or (inliers is None) or (len(inliers) < 4):
         print(f"PnP failed / inliers too few: {0 if inliers is None else len(inliers)}")
         prev_img = img
         continue
     inliers = inliers.reshape(-1)
-    P_in = P_tr[inliers]  # nin x2
-    X_in = X_tr[inliers]  # nin x3
+    #filter out outliers
+    P_in = P_tr[inliers] # Nx2
+    X_in = X_tr[inliers] # Nx3
 
     R_cw, _ = cv2.Rodrigues(rvec)
     T_cw = np.hstack([R_cw,tvec])
-    T_cw=np.vstack([T_cw,[0,0,0,1]])
-    T_wc = np.linalg.inv(T_cw)
-    T_wc=T_wc.flatten()
 
-    # aggiorna stato localization in formato 2xN, 3xN
+    # update 2D keypoints and 3D landmarks of the state, to the current frame
     S["P"] = P_in.T
     S["X"] = X_in.T
 
-    #nello stato abbiamo inserito i PUNTI 2D e 3D relativi a img (che useremo come prev_img al prossimo loop)
-
-    # 3) TRACK CANDIDATES C (KLT)
+    # 3) - 3D MAP COUNTINUOUS UPDATE: in this section we analyze each element of C, which is the set of candidates
+    #keypoints. If they satisfy approrpiate conditions, they are triangulated and moved from C to P, and added to X
     if S["C"].shape[1] > 0:
-        C_prev = P2xN_to_klt(S["C"])
-
-        C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(
-            prev_img, img, C_prev, None, **klt_params
-        )
+        C_prev =  P2xN_to_klt(S["C"]) # Mx1x2
+        #track the candidates of the previous frame to the current one
+        C_tr, stc, _ = cv2.calcOpticalFlowPyrLK(prev_img, img, C_prev, None, **klt_params)
 
         if stc is not None:
             stc = stc.reshape(-1).astype(bool)
-
+            #we consider only candidates that have been succesfully tracked
             C_tr = C_tr.reshape(-1, 2)[stc]
+            #extract their F and T
             F_tr = S["F"].T[stc]
             T_tr = S["T"][:, stc]
 
             new_P = []
             new_X = []
-            promoted_idx = []
-
-            T_wc_mat = T_wc.reshape(4, 4)
-
+            promoted_idx=[]
+            #now we loop over all elements of C and, if it's appropriate, triangulate them
             for idx, (c, f, T0_12) in enumerate(zip(C_tr, F_tr, T_tr.T)):
 
-                T_wc0 = np.eye(4)
-                T_wc0[:3, :] = T0_12.reshape(3, 4)
+                # !!!!!!!!!!!!!!!!!! here we must add the condition that the candidate must satisfy to be triangulated !!!!!!!!!!!!!!!
 
-                T_cw0 = np.linalg.inv(T_wc0)
-                T_cw1 = np.linalg.inv(T_wc_mat)
+                T_wc0 = T0_12.reshape(3, 4)
+                T_wc_h = np.vstack([T_wc0, [0, 0, 0, 1]])
 
-                P0 = K @ T_cw0[:3, :]
-                P1 = K @ T_cw1[:3, :]
-
-                X_h = cv2.triangulatePoints(
-                    P0, P1,
-                    f.reshape(2, 1),
-                    c.reshape(2, 1)
-                )
-
+                #pose of first frame at which c was observed
+                T_cw0_h = np.linalg.inv(T_wc_h)
+                T_cw0 = T_cw0_h[:3, :]
+                #pose of the current frame
+                T_cw1 = T_cw
+                #compute projection matrices
+                P0 = K @ T_cw0
+                P1 = K @ T_cw1
+                X_h = cv2.triangulatePoints(P0, P1,f.reshape(2,1),c.reshape(2,1))
                 X = X_h[:3] / X_h[3]
+
+                if X[2] <= 0:
+                    continue
+
                 new_P.append(c)
                 new_X.append(X.flatten())
                 promoted_idx.append(idx)
 
-            
-
             if len(new_P) > 0:
-                new_P = np.array(new_P).T
-                new_X = np.array(new_X).T
+                new_P = np.array(new_P).T # 2xN
+                new_X = np.array(new_X).T # 3xN
                 S["P"] = np.hstack([S["P"], new_P])
                 S["X"] = np.hstack([S["X"], new_X])
-
+                #remove triangulated points from C, F and T
             if C_tr.shape[0] > 0:
                 keep_mask = np.ones(C_tr.shape[0], dtype=bool)
                 keep_mask[promoted_idx] = False  #aggiorno lo stato per C, F, T con solo i rimanenti C non trinagolati!!!
@@ -333,7 +339,10 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
         C_new = cand[:, mask]                                      # 2xKkeep
 
         if C_new.shape[1] > 0:
-            T12 = T_wc.reshape(4, 4)[:3, :].reshape(12, 1)
+            T_cw_h = np.vstack([T_cw, [0, 0, 0, 1]])
+            print(T_cw_h.shape)
+            T_wc = np.linalg.inv(T_cw_h)
+            T12 = T_wc[:3, :].reshape(12, 1)
             T_new = np.repeat(T12, C_new.shape[1], axis=1)
 
             S["C"] = np.hstack([S["C"], C_new])
