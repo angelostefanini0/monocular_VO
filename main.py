@@ -4,6 +4,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
 
+
+
+
 # --- Setup ---
 ds = 2  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 
@@ -50,6 +53,8 @@ else:
     raise ValueError("Invalid dataset index")
 
 # --- PARAMETERS-
+
+ANGLE_THRESHOLD = np.deg2rad(5.72)  # minimum bearing angle for triangulation
 #KLT PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
 klt_params=dict(
     winSize=(21,21),
@@ -72,6 +77,32 @@ confidence = 0.9999
 #functions that transform keypoints from 2xN shape to Nx1x2 shape for KLT, and viceversa
 def P2xN_to_klt(P):return P.T.astype(np.float32).reshape(-1,1,2) 
 def klt_to_P2xN(Pklt):return Pklt.reshape(-1,2).T.astype(np.float32)
+
+
+def bearing_angle_over_threshold(K, f, c, T0_wc, T_cw):
+
+    T_cw_h = np.vstack([T_cw, [0, 0, 0, 1]])
+    T_wc_h = np.linalg.inv(T_cw_h)
+    T_wc = T_wc_h[:3, :]
+
+    f_h = np.array([f[0], f[1], 1.0]) #f in homogeneous coordinates
+    c_h = np.array([c[0], c[1], 1.0]) #c in homogeneous coordinates
+
+    v0_cam = np.linalg.inv(K) @ f_h
+    v1_cam = np.linalg.inv(K) @ c_h
+
+    v0_cam /= np.linalg.norm(v0_cam) #normalized vector from f 
+    v1_cam /= np.linalg.norm(v1_cam) #normalized vector from c
+
+    R0 = T0_wc[:3, :3]
+    R1 = T_wc[:3, :3]
+
+    v0_w = R0 @ v0_cam
+    v1_w = R1 @ v1_cam
+
+    angle = np.arccos(np.clip(np.dot(v0_w, v1_w), -1.0, 1.0))   
+
+    return angle> ANGLE_THRESHOLD
 
 # --- State ---
 S = {
@@ -281,10 +312,13 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
             #now we loop over all elements of C and, if it's appropriate, triangulate them
             for idx, (c, f, T0_12) in enumerate(zip(C_tr, F_tr, T_tr.T)):
 
-                # !!!!!!!!!!!!!!!!!! here we must add the condition that the candidate must satisfy to be triangulated !!!!!!!!!!!!!!!
+               
 
                 T_wc0 = T0_12.reshape(3, 4)
                 T_wc_h = np.vstack([T_wc0, [0, 0, 0, 1]])
+
+                if not bearing_angle_over_threshold(K, f, c, T_wc_h, T_cw):
+                    continue
 
                 #pose of first frame at which c was observed
                 T_cw0_h = np.linalg.inv(T_wc_h)
