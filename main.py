@@ -4,8 +4,11 @@ import numpy as np
 import matplotlib.pyplot as plt
 from glob import glob
 
+from plotting_utils import init_live_plots, update_traj, update_world, update_frame_with_points, cam_center_from_Tcw
+
+
 # --- Setup ---
-ds = 2  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
+ds = 1  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 
 # Define dataset paths
 # (Set these variables before running)
@@ -15,7 +18,9 @@ ds = 2  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 # own_dataset_path = "/path/to/own_dataset"
 
 if ds == 0:
-    kitti_path = r"./datasets/kitti05"
+    #threshold for bearing angle function
+    ANGLE_THRESHOLD = np.deg2rad(0.1)
+    kitti_path = r"./datasets/kitti"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
     last_frame = 4540
@@ -24,34 +29,52 @@ if ds == 0:
         [0, 7.18856e+02, 1.852157e+02],
         [0, 0, 1]
     ])
+    HAS_GT=True
+    poses=np.loadtxt(os.path.join(kitti_path,'poses','05.txt'))  #N x 12
+    gt_x=poses[:,3]
+    gt_z=poses[:,11]
 elif ds == 1:
-    malaga_path = r"./datasets/malaga"
-    img_dir = os.path.join(malaga_path, 'malaga-urban-dataset-extract-07_rectified_800x600_Images')
-    left_images = sorted(glob(os.path.join(img_dir, '*.png')))
-    last_frame = len(left_images)
+    malaga_path = r"./datasets/malaga-urban-dataset-extract-07"
+    ANGLE_THRESHOLD = np.deg2rad(0.02)
+    img_dir = os.path.join(
+        malaga_path,
+        "malaga-urban-dataset-extract-07_rectified_800x600_Images"
+    )
+    left_images = sorted([
+        os.path.join(img_dir, f)
+        for f in os.listdir(img_dir)
+        if f.endswith("_left.jpg")
+    ])
+    last_frame = len(left_images) - 1
     K = np.array([
         [621.18428, 0, 404.0076],
         [0, 621.18428, 309.05989],
         [0, 0, 1]
     ])
+    HAS_GT=False
+    gt_x=gt_z=None
 elif ds == 2:
-   
+    #threshold for bearing angle function
+    ANGLE_THRESHOLD = np.deg2rad(5.72)
     parking_path = r"./datasets/parking"
     last_frame = 598
     K = np.loadtxt(os.path.join(parking_path, 'K.txt'), delimiter=',', usecols=(0, 1, 2))
     ground_truth = np.loadtxt(os.path.join(parking_path, 'poses.txt'))
     ground_truth = ground_truth[:, [-9, -1]]
+    HAS_GT=True
+    poses=np.loadtxt(os.path.join(parking_path,'poses.txt'))  #N x 12
+    gt_x=poses[:,3]
+    gt_z=poses[:,11]
 elif ds == 3:
     # Own Dataset
     # TODO: define your own dataset and load K obtained from calibration of own camera
     assert 'own_dataset_path' in locals(), "You must define own_dataset_path"
-
+    HAS_GT=False
+    gt_x=gt_z=None
 else:
     raise ValueError("Invalid dataset index")
 
 # --- PARAMETERS ---
-#threshold for bearing angle function
-ANGLE_THRESHOLD = np.deg2rad(5.72)  # minimum bearing angle for triangulation
 #KLT PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
 klt_params=dict(
     winSize=(21,21),
@@ -201,6 +224,11 @@ S["T"]=T
 
 prev_img = img1
 # --- Continuous operation ---
+gt=None
+if HAS_GT:
+    gt=(gt_x,gt_z)
+plots=init_live_plots(gt=gt)
+traj=[]
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"\n\nProcessing frame {i}\n=====================")
 
@@ -220,13 +248,9 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     if img is None:
         print(f"Warning: could not read {image_path}")
         continue
+    
+    P_prev_state=S["P"].copy()   #2xN_prev (positions in prev_img)
 
-    # SHOW IMAGE 
-    cv2.imshow("Input image", img)
-    key = cv2.waitKey(1) & 0xFF
-    if key == 27:  # ESC
-        break
-   
     # 1) - track keypoints from previous frame, that are already associated to a landmark
     P_prev =  P2xN_to_klt(S["P"]) # Nx1x2
     X_prev = S["X"].T.astype(np.float32) # Nx3
@@ -262,6 +286,8 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"PnP inliers: {len(inliers)} ")
     P_in = P_tr[inliers] # Nx2
     X_in = X_tr[inliers] # Nx3
+    P_prev_valid=P_prev.reshape(-1,2)[st]   #prev positions Nx2 (same ordering as P_tr_valid)
+    P_prev_in=P_prev_valid[inliers]         #prev positions of inlier tracks Nx2
 
     R_cw, _ = cv2.Rodrigues(rvec)
     T_cw = np.hstack([R_cw,tvec])
@@ -269,6 +295,17 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     # update 2D keypoints and 3D landmarks of the state, to the current frame
     S["P"] = P_in.T
     S["X"] = X_in.T
+    P_prev_for_plot=P_prev_in.T   #2xN_inliers
+
+
+    traj.append(cam_center_from_Tcw(T_cw))
+    update_traj(plots,traj)
+    update_world(plots,T_cw,S["X"])
+    update_frame_with_points(plots,img,S["P"],P_prev_for_plot)
+
+    plots["fig"].canvas.draw()
+    plots["fig"].canvas.flush_events()
+    plt.pause(0.001)
 
     # 3) - 3D MAP COUNTINUOUS UPDATE: in this section we analyze each element of C, which is the set of candidates
     #keypoints. If they satisfy approrpiate conditions, they are triangulated and moved from C to P, and added to X
@@ -305,6 +342,11 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 P1 = K @ T_cw
                 X_h = cv2.triangulatePoints(P0, P1,f.reshape(2,1),c.reshape(2,1))
                 X = X_h[:3] / X_h[3]
+                #now we want to verify that no points triangulated are behind the camera
+                T_cw_h=np.vstack([T_cw,[0,0,0,1]])
+                X_c_h=T_cw_h@X_h
+                if X_c_h[2]<0:
+                    continue
 
                 new_P.append(c)
                 new_X.append(X.flatten())
