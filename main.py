@@ -305,3 +305,32 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 S["C"] = C_tr[keep_mask].T
                 S["F"] = F_tr[keep_mask].T
                 S["T"] = T_tr[:, keep_mask]
+
+    # 4) ADD NEW CANDIDATES
+    new_corners = cv2.goodFeaturesToTrack(img, maxCorners=300, qualityLevel=0.01, minDistance=min_distance)
+    if new_corners is not None:
+        cand = klt_to_P2xN(new_corners.astype(np.float32))  # 2xK
+
+        mask = np.ones(cand.shape[1], dtype=bool)
+
+        if S["P"].shape[1] > 0:
+            diffP = cand[:, :, None] - S["P"][:, None, :]          # 2 x K x Np
+            distP_sq = np.sum(diffP**2, axis=0)                    # K x Np
+            min_distP_sq = np.min(distP_sq, axis=1)                # K
+            mask &= (min_distP_sq > (min_distance**2))
+
+        if S["C"].shape[1] > 0:
+            diffC = cand[:, :, None] - S["C"][:, None, :]          # 2 x K x Nc
+            distC_sq = np.sum(diffC**2, axis=0)                    # K x Nc
+            min_distC_sq = np.min(distC_sq, axis=1)                # K
+            mask &= (min_distC_sq > (min_distance**2))
+
+        C_new = cand[:, mask]                                      # 2xKkeep
+
+        if C_new.shape[1] > 0:
+            T12 = T_wc.reshape(4, 4)[:3, :].reshape(12, 1)
+            T_new = np.repeat(T12, C_new.shape[1], axis=1)
+
+            S["C"] = np.hstack([S["C"], C_new])
+            S["F"] = np.hstack([S["F"], C_new.copy()])
+            S["T"] = np.hstack([S["T"], T_new])
