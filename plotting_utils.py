@@ -21,7 +21,7 @@ def init_live_plots(gt=None):
     fig=plt.figure(figsize=(14,8))
     gs=fig.add_gridspec(2,2,height_ratios=[1,1.2])
 
-    # ---------- TRAJECTORY ----------
+    # --- Ground Truth and Estimated Trajectory ---
     ax_traj=fig.add_subplot(gs[0,0])
     ax_traj.set_title("Ground Truth and Estimated Trajectory")
     ax_traj.set_xlabel("x")
@@ -41,7 +41,6 @@ def init_live_plots(gt=None):
             label='Ground Truth'
         )
 
-
     traj_line,=ax_traj.plot(
         [],
         [],
@@ -51,8 +50,7 @@ def init_live_plots(gt=None):
     )
     ax_traj.legend(loc="best")
 
-
-    # ---------- WORLD ----------
+    # --- Camera Frame and Triangulated Landmarks ---
     ax_world=fig.add_subplot(gs[0,1])
     ax_world.set_title("Camera Frame and Triangulated Landmarks")
     ax_world.set_xlabel("x")
@@ -89,24 +87,21 @@ def init_live_plots(gt=None):
         loc='best'
     )
 
-
-
-    # ---------- IMAGE ----------
+    # --- Camera Frame and Triangulated Landmarks ---
     ax_img=fig.add_subplot(gs[1,:])
     ax_img.set_title("Current Frame with Tracked Inliers")
     ax_img.axis("off")
 
     frame_text=ax_img.text(
-        0.01,0.99,               # x = left, y = top (axes coords)
+        0.01,0.99,
         "",
         transform=ax_img.transAxes,
         color="white",
         fontsize=12,
-        va="top",                # anchor text to its top
+        va="top",
         ha="left",
         bbox=dict(facecolor="black",alpha=0.4,edgecolor="none",pad=2)
     )
-
 
     img_artist=ax_img.imshow(
         np.zeros((10,10),dtype=np.uint8),
@@ -127,7 +122,6 @@ def init_live_plots(gt=None):
 
     flow_lc=LineCollection([],linewidths=0.8,colors='lime',alpha=0.8)
     ax_img.add_collection(flow_lc)
-
 
     return {
         "fig":fig,
@@ -154,7 +148,7 @@ def update_traj(plot_state,traj_Cw):
     C=np.array(traj_Cw,dtype=float)
     plot_state["traj_line"].set_data(C[:,0],C[:,2])
 
-    #Optional autoscale
+    # autoscale
     ax=plot_state["ax_traj"]
     ax.relim()
     ax.autoscale_view()
@@ -228,19 +222,18 @@ def update_frame_with_points(plot_state,img_gray,P_2xN,Pprev_2xN=None,frame_idx=
     ax.set_ylim(h,0)
     ax.set_aspect("equal",adjustable="box")
 
-    #Current points (green crosses)
+    #Current tracked points
     if P_2xN is not None and P_2xN.size>0:
         plot_state["pts_scatter"].set_offsets(P_2xN.T.astype(float))
     else:
         plot_state["pts_scatter"].set_offsets(np.zeros((0,2)))
 
-    #Flow lines: prev -> current
+    #Tracking lines
     if (Pprev_2xN is not None) and (P_2xN is not None) and (Pprev_2xN.size>0) and (P_2xN.size>0):
-        #Assume correspondence by column order, so sizes must match
         n=min(Pprev_2xN.shape[1],P_2xN.shape[1])
-        p0=Pprev_2xN[:,:n].T.astype(float)  #Nx2
-        p1=P_2xN[:,:n].T.astype(float)      #Nx2
-        segs=np.stack([p0,p1],axis=1)       #Nx2x2
+        p0=Pprev_2xN[:,:n].T.astype(float)
+        p1=P_2xN[:,:n].T.astype(float)
+        segs=np.stack([p0,p1],axis=1)
         plot_state["flow_lc"].set_segments(segs)
     else:
         plot_state["flow_lc"].set_segments([])

@@ -20,6 +20,7 @@ ds = 0  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 if ds == 0:
     #threshold for bearing angle function
     ANGLE_THRESHOLD = np.deg2rad(0.1)
+    bootstrap_frames = [0, 2] #frames betweem which bootstrap is performed
     kitti_path = r"./datasets/kitti"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
@@ -30,12 +31,13 @@ if ds == 0:
         [0, 0, 1]
     ])
     HAS_GT=True
-    poses=np.loadtxt(os.path.join(kitti_path,'poses','05.txt'))  #N x 12
+    poses=np.loadtxt(os.path.join(kitti_path,'poses','05.txt')) #N x 12
     gt_x=poses[:,3]
     gt_z=poses[:,11]
 elif ds == 1:
-    malaga_path = r"./datasets/malaga-urban-dataset-extract-07"
     ANGLE_THRESHOLD = np.deg2rad(0.02)
+    bootstrap_frames = [0, 2] #frames betweem which bootstrap is performed
+    malaga_path = r"./datasets/malaga-urban-dataset-extract-07"
     img_dir = os.path.join(
         malaga_path,
         "malaga-urban-dataset-extract-07_rectified_800x600_Images"
@@ -56,6 +58,7 @@ elif ds == 1:
 elif ds == 2:
     #threshold for bearing angle function
     ANGLE_THRESHOLD = np.deg2rad(5.72)
+    bootstrap_frames = [0, 2] #frames betweem which bootstrap is performed
     parking_path = r"./datasets/parking"
     last_frame = 598
     K = np.loadtxt(os.path.join(parking_path, 'K.txt'), delimiter=',', usecols=(0, 1, 2))
@@ -66,26 +69,32 @@ elif ds == 2:
     gt_x=poses[:,3]
     gt_z=poses[:,11]
 elif ds == 3:
-    # Own Dataset
-    # TODO: define your own dataset and load K obtained from calibration of own camera
-    assert 'own_dataset_path' in locals(), "You must define own_dataset_path"
+    bootstrap_frames = [0, 15] #frames betweem which bootstrap is performed
     HAS_GT=False
     gt_x=gt_z=None
+    ANGLE_THRESHOLD = np.deg2rad(0.1)
+    last_frame = 1740
+    own_dataset_path = r"./datasets/our_dataset7"
+    K = np.array([
+        [1109.7, 0, 637.5062],
+        [0, 1113.5, 357.1623],
+        [0, 0, 1]
+    ])
 else:
     raise ValueError("Invalid dataset index")
 
 # --- PARAMETERS ---
-#KLT PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
+#KLT PARAMETERS
 klt_params=dict(
     winSize=(21,21),
     maxLevel=3,
     criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,30,0.01)
 )
-#goodFeaturesToTrack PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
+#goodFeaturesToTrack PARAMETERS
 max_num_corners=1000
 quality_level=0.01
 min_distance=2
-#findEssentialMat PARAMETERS - !!!!!! tune them !!!!! (may be necessary to tune them fro each dataset)
+#findEssentialMat PARAMETERS
 prob_essent_mat=0.999
 thresh_essent_mat=1.0
 #PNP RANSAC PARAMETERS
@@ -138,8 +147,6 @@ S = {
 }
 
 # --- Bootstrap ---
-bootstrap_frames = [0, 2]  # example: you must set actual bootstrap indices
-
 if ds == 0:
     img0 = cv2.imread(os.path.join(kitti_path, '05', 'image_0', f"{bootstrap_frames[0]:06d}.png"), cv2.IMREAD_GRAYSCALE)
     img1 = cv2.imread(os.path.join(kitti_path, '05', 'image_0', f"{bootstrap_frames[1]:06d}.png"), cv2.IMREAD_GRAYSCALE)
@@ -151,8 +158,8 @@ elif ds == 2:
     img1 = cv2.imread(os.path.join(parking_path, 'images', f"img_{bootstrap_frames[1]:05d}.png"), cv2.IMREAD_GRAYSCALE)
 elif ds == 3:
     # Load images from own dataset
-    img0 = cv2.imread(os.path.join(own_dataset_path, f"{bootstrap_frames[0]:06d}.png"), cv2.IMREAD_GRAYSCALE)
-    img1 = cv2.imread(os.path.join(own_dataset_path, f"{bootstrap_frames[1]:06d}.png"), cv2.IMREAD_GRAYSCALE)
+    img0 = cv2.imread(os.path.join(own_dataset_path, 'Images', f"img_{bootstrap_frames[0]:05d}.png"), cv2.IMREAD_GRAYSCALE)
+    img1 = cv2.imread(os.path.join(own_dataset_path,'Images',  f"img_{bootstrap_frames[1]:05d}.png"), cv2.IMREAD_GRAYSCALE)
 else:
     raise ValueError("Invalid dataset index")
 
@@ -240,7 +247,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     elif ds == 2:
         image_path = os.path.join(parking_path, 'images', f"img_{i:05d}.png")
     elif ds == 3:
-        image_path = os.path.join(own_dataset_path, f"{i:06d}.png")
+        image_path = os.path.join(own_dataset_path, 'Images', f"img_{i:05d}.png")
     else:
         raise ValueError("Invalid dataset index")
 
@@ -249,7 +256,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
         print(f"Warning: could not read {image_path}")
         continue
     
-    P_prev_state=S["P"].copy()   #2xN_prev (positions in prev_img)
+    P_prev_state=S["P"].copy() #2xN_prev (positions in prev_img)
 
     # 1) - track keypoints from previous frame, that are already associated to a landmark
     P_prev =  P2xN_to_klt(S["P"]) # Nx1x2
@@ -286,8 +293,8 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"PnP inliers: {len(inliers)} ")
     P_in = P_tr[inliers] # Nx2
     X_in = X_tr[inliers] # Nx3
-    P_prev_valid=P_prev.reshape(-1,2)[st]   #prev positions Nx2 (same ordering as P_tr_valid)
-    P_prev_in=P_prev_valid[inliers]         #prev positions of inlier tracks Nx2
+    P_prev_valid=P_prev.reshape(-1,2)[st] #prev positions Nx2
+    P_prev_in=P_prev_valid[inliers] #prev positions of inlier tracks Nx2
 
     R_cw, _ = cv2.Rodrigues(rvec)
     T_cw = np.hstack([R_cw,tvec])
@@ -295,7 +302,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     # update 2D keypoints and 3D landmarks of the state, to the current frame
     S["P"] = P_in.T
     S["X"] = X_in.T
-    P_prev_for_plot=P_prev_in.T   #2xN_inliers
+    P_prev_for_plot=P_prev_in.T #2xN_inliers
 
 
     traj.append(cam_center_from_Tcw(T_cw))
@@ -342,11 +349,15 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 P1 = K @ T_cw
                 X_h = cv2.triangulatePoints(P0, P1,f.reshape(2,1),c.reshape(2,1))
                 X = X_h[:3] / X_h[3]
-                """#now we want to verify that no points triangulated are behind the camera
-                T_cw_h=np.vstack([T_cw,[0,0,0,1]])
-                X_c_h=T_cw_h@X_h
-                if X_c_h[2]<0:
-                    continue"""
+                #now we want to verify that no points triangulated are behind the camera
+                T_cw0_h = np.vstack([T_cw0, [0, 0, 0, 1]])
+                T_cw_h  = np.vstack([T_cw,  [0, 0, 0, 1]])
+
+                X_c0 = T_cw0_h @ np.vstack([X, 1.0])
+                X_c1 = T_cw_h  @ np.vstack([X, 1.0])
+
+                if X_c0[2] <= 0 or X_c1[2] <= 0 or X_c0[2]>300 or X_c1[2]>300:
+                    continue
 
                 new_P.append(c)
                 new_X.append(X.flatten())
