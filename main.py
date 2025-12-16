@@ -8,7 +8,7 @@ from plotting_utils import init_live_plots, update_traj, update_world, update_fr
 
 
 # --- Setup ---
-ds = 1  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
+ds = 0  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 
 # Define dataset paths
 # (Set these variables before running)
@@ -301,7 +301,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     traj.append(cam_center_from_Tcw(T_cw))
     update_traj(plots,traj)
     update_world(plots,T_cw,S["X"])
-    update_frame_with_points(plots,img,S["P"],P_prev_for_plot)
+    update_frame_with_points(plots,img,S["P"],P_prev_for_plot,frame_idx=i)
 
     plots["fig"].canvas.draw()
     plots["fig"].canvas.flush_events()
@@ -342,11 +342,11 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 P1 = K @ T_cw
                 X_h = cv2.triangulatePoints(P0, P1,f.reshape(2,1),c.reshape(2,1))
                 X = X_h[:3] / X_h[3]
-                #now we want to verify that no points triangulated are behind the camera
+                """#now we want to verify that no points triangulated are behind the camera
                 T_cw_h=np.vstack([T_cw,[0,0,0,1]])
                 X_c_h=T_cw_h@X_h
                 if X_c_h[2]<0:
-                    continue
+                    continue"""
 
                 new_P.append(c)
                 new_X.append(X.flatten())

@@ -54,7 +54,7 @@ def init_live_plots(gt=None):
 
     # ---------- WORLD ----------
     ax_world=fig.add_subplot(gs[0,1])
-    ax_world.set_title("Camera Frame and nearby Landmarks")
+    ax_world.set_title("Camera Frame and Triangulated Landmarks")
     ax_world.set_xlabel("x")
     ax_world.set_ylabel("z")
     ax_world.axis("equal")
@@ -93,8 +93,20 @@ def init_live_plots(gt=None):
 
     # ---------- IMAGE ----------
     ax_img=fig.add_subplot(gs[1,:])
-    ax_img.set_title("Current frame with tracked points")
+    ax_img.set_title("Current Frame with Tracked Inliers")
     ax_img.axis("off")
+
+    frame_text=ax_img.text(
+        0.01,0.99,               # x = left, y = top (axes coords)
+        "",
+        transform=ax_img.transAxes,
+        color="white",
+        fontsize=12,
+        va="top",                # anchor text to its top
+        ha="left",
+        bbox=dict(facecolor="black",alpha=0.4,edgecolor="none",pad=2)
+    )
+
 
     img_artist=ax_img.imshow(
         np.zeros((10,10),dtype=np.uint8),
@@ -132,8 +144,8 @@ def init_live_plots(gt=None):
         "ax_img":ax_img,
         "img_artist":img_artist,
         "pts_scatter":pts_scatter,
-        "flow_lc":flow_lc
-
+        "flow_lc":flow_lc,
+        "frame_text":frame_text
     }
 
 def update_traj(plot_state,traj_Cw):
@@ -185,7 +197,7 @@ def update_world(
 
     ax.set_xlim(C[0]-w,C[0]+w)
     ax.set_ylim(C[2]-w,C[2]+w)
-    ax.set_aspect("equal")
+    ax.set_aspect("equal",adjustable="box")
 
     axis_len=frame_scale*(2.0*w)
     x_axis_end=C+axis_len*Rwc[:,0]
@@ -202,7 +214,7 @@ def update_world(
         (z_axis_end[0],z_axis_end[2])
     )
 
-def update_frame_with_points(plot_state,img_gray,P_2xN,Pprev_2xN=None):
+def update_frame_with_points(plot_state,img_gray,P_2xN,Pprev_2xN=None,frame_idx=None):
     h,w=img_gray.shape[:2]
 
     img_artist=plot_state["img_artist"]
@@ -214,7 +226,7 @@ def update_frame_with_points(plot_state,img_gray,P_2xN,Pprev_2xN=None):
 
     ax.set_xlim(0,w)
     ax.set_ylim(h,0)
-    ax.set_aspect("equal")
+    ax.set_aspect("equal",adjustable="box")
 
     #Current points (green crosses)
     if P_2xN is not None and P_2xN.size>0:
@@ -232,5 +244,11 @@ def update_frame_with_points(plot_state,img_gray,P_2xN,Pprev_2xN=None):
         plot_state["flow_lc"].set_segments(segs)
     else:
         plot_state["flow_lc"].set_segments([])
+
+    if frame_idx is not None:
+        plot_state["frame_text"].set_text(f"Frame: {frame_idx}")
+    else:
+        plot_state["frame_text"].set_text("")
+
 
 
