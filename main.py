@@ -9,6 +9,7 @@ from plotting_utils import init_live_plots, update_traj, update_world, update_fr
 
 # --- Setup ---
 ds = 0  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
+visualize_frames = False
 
 # Define dataset paths
 # (Set these variables before running)
@@ -24,7 +25,7 @@ if ds == 0:
     kitti_path = r"./datasets/kitti"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
-    last_frame = 4540
+    last_frame = 400
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
@@ -83,6 +84,8 @@ elif ds == 3:
 else:
     raise ValueError("Invalid dataset index")
 
+K_inv = np.linalg.inv(K)
+
 # --- PARAMETERS ---
 #KLT PARAMETERS
 klt_params=dict(
@@ -106,7 +109,9 @@ confidence = 0.99
 #functions that transform keypoints from 2xN shape to Nx1x2 shape for KLT, and viceversa
 def P2xN_to_klt(P):return P.T.astype(np.float32).reshape(-1,1,2) 
 def klt_to_P2xN(Pklt):return Pklt.reshape(-1,2).T.astype(np.float32)
-def bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
+
+
+def bearing_angle_over_threshold(K, K_inv, f, c, T_cw0, T_cw):
     T_cw_h = np.vstack([T_cw, [0, 0, 0, 1]])
     T_wc_h = np.linalg.inv(T_cw_h)
     T_wc = T_wc_h[:3, :]
@@ -118,8 +123,8 @@ def bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
     f_h = np.array([f[0], f[1], 1.0]) #f in homogeneous coordinates
     c_h = np.array([c[0], c[1], 1.0]) #c in homogeneous coordinates
 
-    v0_cam = np.linalg.inv(K) @ f_h
-    v1_cam = np.linalg.inv(K) @ c_h
+    v0_cam = K_inv @ f_h
+    v1_cam = K_inv @ c_h
 
     v0_cam /= np.linalg.norm(v0_cam) #normalized vector from f 
     v1_cam /= np.linalg.norm(v1_cam) #normalized vector from c
@@ -234,7 +239,8 @@ prev_img = img1
 gt=None
 if HAS_GT:
     gt=(gt_x,gt_z)
-plots=init_live_plots(gt=gt)
+if visualize_frames:
+    plots=init_live_plots(gt=gt)
 traj=[]
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"\n\nProcessing frame {i}\n=====================")
@@ -304,15 +310,16 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     S["X"] = X_in.T
     P_prev_for_plot=P_prev_in.T #2xN_inliers
 
-
     traj.append(cam_center_from_Tcw(T_cw))
-    update_traj(plots,traj)
-    update_world(plots,T_cw,S["X"])
-    update_frame_with_points(plots,img,S["P"],P_prev_for_plot,frame_idx=i)
 
-    plots["fig"].canvas.draw()
-    plots["fig"].canvas.flush_events()
-    plt.pause(0.001)
+    if visualize_frames:
+        update_traj(plots,traj)
+        update_world(plots,T_cw,S["X"])
+        update_frame_with_points(plots,img,S["P"],P_prev_for_plot,frame_idx=i)
+
+        plots["fig"].canvas.draw()
+        plots["fig"].canvas.flush_events()
+        plt.pause(0.001)
 
     # 3) - 3D MAP COUNTINUOUS UPDATE: in this section we analyze each element of C, which is the set of candidates
     #keypoints. If they satisfy approrpiate conditions, they are triangulated and moved from C to P, and added to X
@@ -341,7 +348,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                         
                 T_cw0 = T_CW_fvec.reshape(3, 4)
     
-                if not bearing_angle_over_threshold(K, f, c, T_cw0, T_cw):
+                if not bearing_angle_over_threshold(K, K_inv, f, c, T_cw0, T_cw):
                     continue         
               
                 #compute projection matrices
@@ -402,3 +409,48 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
             n_new_candidates = C_new.shape[1]
 
     prev_img = img
+
+if not visualize_frames:
+    if len(traj) == 0:
+        print("No trajectory to plot.")
+    else:
+        traj_arr = np.array(traj)
+        
+        # Creazione figura con lo stile della funzione init_live_plots
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(1, 1, 1)
+        
+        # --- Estetica dello stile richiesto ---
+        ax.set_title("Estimated Trajectory (Final Result)", fontsize=14, fontweight='bold')
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("z [m]")
+        ax.axis("equal")
+        
+        # Griglia specifica: tratteggiata, sottile e semitrasparente
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.6)
+        
+        # --- Plot Ground Truth (se presente) ---
+        if HAS_GT and (gt_x is not None) and (gt_z is not None):
+            ax.plot(
+                gt_x, gt_z, 
+                linestyle='--', 
+                color='black', 
+                linewidth=1.0, 
+                alpha=0.7, 
+                label='Ground Truth'
+            )
+            
+        # --- Plot Traiettoria Stimata ---
+        # Usiamo il colore rosso e lo spessore 2.0 come nel tuo stile live
+        ax.plot(
+            traj_arr[:, 0], traj_arr[:, 2], 
+            color='red', 
+            linewidth=2.0, 
+            label='Estimated Trajectory'
+        )
+        
+        # Legenda e layout
+        ax.legend(loc="best", frameon=True)
+        fig.tight_layout()
+        
+        plt.show()
