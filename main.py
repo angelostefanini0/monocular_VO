@@ -25,6 +25,7 @@ if ds == 0:
     kitti_path = r"./datasets/kitti"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
+    last_frame = 4540
     last_frame = 400
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
@@ -94,7 +95,8 @@ klt_params=dict(
     criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,30,0.01)
 )
 #goodFeaturesToTrack PARAMETERS
-max_num_corners=1000
+max_num_corners_bootstrap=1000
+max_num_corners=500
 quality_level=0.01
 min_distance=2
 #findEssentialMat PARAMETERS
@@ -168,8 +170,9 @@ elif ds == 3:
 else:
     raise ValueError("Invalid dataset index")
 
+
 # 1) - harris to detect keypoints in first keyframe (img0)
-pts1=cv2.goodFeaturesToTrack(img0,max_num_corners,quality_level,min_distance) #Nx1x2
+pts1=cv2.goodFeaturesToTrack(img0,max_num_corners_bootstrap,quality_level,min_distance) #Nx1x2
 n=0 if pts1 is None else pts1.shape[0]
 print("Number of detected features in keyframe 1: ", n)
 pts1=pts1.astype(np.float32)
@@ -219,7 +222,7 @@ X=(X_homogeneous[:3,:]/X_homogeneous[3:4,:]).astype(np.float32)
 S["P"]=points2
 S["X"]=X
 #to create the candidates set C, we must detect new features, and check that they are not already in P
-cand=cv2.goodFeaturesToTrack(img1,max_num_corners,quality_level,min_distance)
+cand=cv2.goodFeaturesToTrack(img1,max_num_corners_bootstrap,quality_level,min_distance)
 cand=klt_to_P2xN(cand)
 #to ensures points in C are not redundant with ones in P, we perform a minimum distance check
 diff=cand[:,:,None]-points2[:,None,:]
@@ -233,6 +236,9 @@ S["C"]=C
 S["F"]=C.copy()
 S["T"]=T
 
+
+print(S["T"])
+assert False
 
 prev_img = img1
 # --- Continuous operation ---
@@ -384,20 +390,37 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 S["T"] = T_tr[:, keep_mask]
 
     # 4) - CANDIDATES SET UPDATE
-    new_corners = cv2.goodFeaturesToTrack(img, max_num_corners, quality_level, min_distance)
+
+    # Crea una maschera bianca (tutti 1) grande quanto l'immagine
+    mask_cv = np.ones(img.shape, dtype=np.uint8) * 255
+
+    # Per ogni punto già esistente in S["P"] e S["C"], disegna un cerchio nero (0)
+    for pt in S["P"].T:
+        cv2.circle(mask_cv, tuple(pt.astype(int)), min_distance + 1, 0, -1)
+    for pt in S["C"].T:
+        cv2.circle(mask_cv, tuple(pt.astype(int)), min_distance + 1, 0, -1)
+
+    # Chiedi a OpenCV di trovare i punti solo dove la maschera è bianca (255)
+    new_corners = cv2.goodFeaturesToTrack(img, max_num_corners, quality_level, min_distance, mask=mask_cv)
+    # new_corners = cv2.goodFeaturesToTrack(img, max_num_corners, quality_level, min_distance)
     if new_corners is not None:
         cand = klt_to_P2xN(new_corners.astype(np.float32))
-        mask = np.ones(cand.shape[1], dtype=bool)
+        # mask = np.ones(cand.shape[1], dtype=bool)
 
-        if S["P"].shape[1] > 0:
-            diffP = cand[:, :, None] - S["P"][:, None, :]
-            mask &= (np.min(np.sum(diffP**2, axis=0), axis=1) > min_distance**2)
+        # if S["P"].shape[1] > 0:
+        #     diffP = cand[:, :, None] - S["P"][:, None, :]
+        #     mask &= (np.min(np.sum(diffP**2, axis=0), axis=1) > min_distance**2)
 
-        if S["C"].shape[1] > 0:
-            diffC = cand[:, :, None] - S["C"][:, None, :]
-            mask &= (np.min(np.sum(diffC**2, axis=0), axis=1) > min_distance**2)
+        # print("first removed", cand.shape[1] - np.sum(mask), "out of ", cand.shape[1])
 
-        C_new = cand[:, mask]
+        # if S["C"].shape[1] > 0:
+        #     diffC = cand[:, :, None] - S["C"][:, None, :]
+        #     mask &= (np.min(np.sum(diffC**2, axis=0), axis=1) > min_distance**2)
+
+        # print("removed total ", cand.shape[1] - np.sum(mask), "out of ", cand.shape[1])
+        
+        # C_new = cand[:, mask]
+        C_new = cand
 
         if C_new.shape[1] > 0:
             T12 = T_cw.reshape(12, 1)
