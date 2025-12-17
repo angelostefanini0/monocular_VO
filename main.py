@@ -26,7 +26,6 @@ if ds == 0:
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
     last_frame = 4540
-    last_frame = 400
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
@@ -139,7 +138,7 @@ def bearing_angle_over_threshold(K, K_inv, f, c, T_cw0, T_cw):
 
     angle = np.arccos(np.clip(np.dot(v0_w, v1_w), -1.0, 1.0))   
 
-    return angle>ANGLE_THRESHOLD
+    return angle
 
 # --- State ---
 S = {
@@ -235,8 +234,90 @@ T=np.repeat(T_CW2.reshape(12,1),C.shape[1],axis=1)
 S["C"]=C
 S["F"]=C.copy()
 S["T"]=T
+S["frame_index"] = np.zeros(C.shape[1], dtype = int)
+assert S["frame_index"].shape[0] == S["C"].shape[1], f"point 1, {S['frame_index'].shape[0]}"
 
 
+SAVINGS_T_wc = []
+
+R_cw = T_CW2[:3, :3]
+t_cw = T_CW2[:3, 3]
+R_wc = R_cw.T                    
+t_wc = -R_wc @ t_cw              
+T_wc = np.hstack([R_wc, t_wc.reshape(3, 1)])
+SAVINGS_T_wc.append(T_wc)
+
+def compute_all_angles(K_inv, F_tr, C_tr, frame_index, T_cw):
+    N = C_tr.shape[1]
+    if N == 0: return np.array([])
+
+    # 1. T_wc (Current)
+    R_cw = T_cw[:3, :3]
+    R_wc = R_cw.T                    
+    t_wc = -R_wc @ T_cw[:3, 3]              
+    T_wc = np.hstack([R_wc, t_wc.reshape(3, 1)])
+    SAVINGS_T_wc.append(T_wc)
+
+    # 2. Back-projection
+    F_h = np.vstack([F_tr, np.ones(N)])
+    C_h = np.vstack([C_tr, np.ones(N)])
+    
+    v0_cam = K_inv @ F_h
+    v1_cam = K_inv @ C_h
+
+    # Normalizzazione lungo l'asse delle coordinate (asse 0, ovvero le righe x,y,z)
+    v0_cam /= np.linalg.norm(v0_cam, axis=0, keepdims=True)
+    v1_cam /= np.linalg.norm(v1_cam, axis=0, keepdims=True)
+
+    # 3. Rotazione World
+    # Frame corrente (v1_w)
+    v1_w = R_wc @ v1_cam  # (3, 3) @ (3, N) -> (3, N)
+
+    # Frame di origine (v0_w)
+    # Estraiamo R0 per ogni punto
+    all_R0 = np.array([SAVINGS_T_wc[int(idx)][:3, :3] for idx in frame_index]) # (N, 3, 3)
+    
+    # Prepariamo v0_cam per la moltiplicazione batch: (N, 3, 1)
+    v0_cam_batch = v0_cam.T.reshape(N, 3, 1)
+    
+    # Moltiplicazione batch: (N, 3, 3) @ (N, 3, 1) -> (N, 3, 1)
+    v0_w_batch = all_R0 @ v0_cam_batch
+    
+    # Riportiamo a (3, N)
+    v0_w = v0_w_batch.squeeze(-1).T
+
+    # 4. Angoli
+    cos_angles = np.sum(v0_w * v1_w, axis=0)
+    return np.arccos(np.clip(cos_angles, -1.0, 1.0))
+
+def compute_all_angles3(K_inv, F_tr, C_tr, frame_index, T_cw):
+    N = C_tr.shape[1]
+    all_angles = np.zeros(N)
+    # Computation of T_wc
+    R_cw = T_cw[:3, :3]
+    t_cw = T_cw[:3, 3]
+    R_wc = R_cw.T
+    t_wc = -R_wc @ t_cw
+    T_wc = np.hstack([R_wc, t_wc.reshape(3, 1)])
+    SAVINGS_T_wc.append(T_wc)
+    print("N", N)
+    print(F_tr.shape)
+    F_h = np.vstack([F_tr, np.ones(N)])
+    C_h = np.vstack([C_tr, np.ones(N)])
+    for i in range(C_tr.shape[1]):
+        f_h = F_h[:, i]
+        c_h = C_h[:, i]
+        v0_cam = K_inv @ f_h
+        v1_cam = K_inv @ c_h
+        v0_cam /= np.linalg.norm(v0_cam) #normalized vector from f
+        v1_cam /= np.linalg.norm(v1_cam) #normalized vector from c
+        # R0 = T_wc0[:3, :3]
+        R0 = SAVINGS_T_wc[frame_index[i]][:3, :3]
+        R1 = T_wc[:3, :3]
+        v0_w = R0 @ v0_cam
+        v1_w = R1 @ v1_cam
+        all_angles[i] = np.arccos(np.clip(np.dot(v0_w, v1_w), -1.0, 1.0))
+    return all_angles
 
 prev_img = img1
 # --- Continuous operation ---
@@ -248,6 +329,10 @@ if visualize_frames:
 traj=[]
 for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     print(f"\n\nProcessing frame {i}\n=====================")
+    assert S["X"].shape[1] == S["P"].shape[1]
+    assert S["F"].shape[1] == S["C"].shape[1]
+    assert S["frame_index"].shape[0] == S["C"].shape[1]
+    assert S["frame_index"].shape[0] == S["T"].shape[1]
 
     # LOAD IMAGE
     if ds == 0:
@@ -339,22 +424,74 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
 
             F_tr = S["F"][:, stc]
             T_tr = S["T"][:, stc]
+            frame_index = S["frame_index"][stc]
 
             new_P = []
             new_X = []
             promoted_idx=[]
             #now we loop over all elements of C and, if it's appropriate, triangulate them
             #stiamo consideranod T_CW_f
+
+            all_angles = compute_all_angles(K_inv, F_tr, C_tr, frame_index, T_cw)
+
+            mask_angle = all_angles > ANGLE_THRESHOLD
+
+            # # Se nessun punto passa, saltiamo
+            # if not np.any(mask_angle):
+            #     pass
+            # else:
+            #     # 1. Applichiamo la maschera ai dati
+            #     F_valid = F_tr[:, mask_angle]
+            #     C_valid = C_tr[:, mask_angle]
+            #     idx_valid = frame_index[mask_angle]
+            #     N_valid = F_valid.shape[1]
+
+            #     # 2. Triangolazione "Batch"
+            #     # Se hai molti punti con lo stesso frame_index, potresti raggrupparli.
+            #     # Altrimenti, il modo più veloce per gestire T_cw0 diverse è questo:
+            #     X_world = []
+            #     valid_final_mask = []
+
+            #     for idx_in_valid in range(N_valid):
+            #         f = F_valid[:, idx_in_valid]
+            #         c = C_valid[:, idx_in_valid]
+                    
+            #         # Recuperiamo T_cw0 corretta
+            #         T_cw0 = SAVINGS_T_wc[int(idx_valid[idx_in_valid])]
+                    
+            #         # Triangolazione singola (OpenCV è comunque veloce qui se non facciamo logica extra)
+            #         P0 = K @ T_cw0
+            #         P1 = K @ T_cw
+            #         X_h = cv2.triangulatePoints(P0, P1, f.reshape(2,1), c.reshape(2,1))
+            #         X = X_h[:3] / X_h[3]
+                    
+            #         # --- Check di Cheirality (Dietro la camera) Vettorizzato ---
+            #         # Invece di vstack, usiamo la formula R*X + t
+            #         X_c0 = T_cw0[:3, :3] @ X + T_cw0[:3, 3:4]
+            #         X_c1 = T_cw[:3, :3] @ X + T_cw[:3, 3:4]
+                    
+            #         # Controllo profondità (z > 0 e entro un limite ragionevole)
+            #         z0, z1 = X_c0[2, 0], X_c1[2, 0]
+            #         if 0 < z0 < 300 and 0 < z1 < 300:
+            #             new_P.append(c)
+            #             new_X.append(X.flatten())
+            #             # Troviamo l'indice originale per promoted_idx
+            #             original_idx = np.where(mask_angle)[0][idx_in_valid]
+            #             promoted_idx.append(original_idx)
+
+
             for idx in range(C_tr.shape[1]):
                 c = C_tr[:, idx]
                 f = F_tr[:, idx]
                 T_CW_fvec = T_tr[:, idx]
                         
                 T_cw0 = T_CW_fvec.reshape(3, 4)
+                # angle = bearing_angle_over_threshold(K, K_inv, f, c, T_cw0, T_cw)
+                angle = all_angles[idx]
+                # assert abs(angle - all_angles[idx]) < 1e-5, f"{angle}, {all_angles[idx]}"
     
-                if not bearing_angle_over_threshold(K, K_inv, f, c, T_cw0, T_cw):
+                if not angle>ANGLE_THRESHOLD:
                     continue         
-              
                 #compute projection matrices
                 P0 = K @ T_cw0
                 P1 = K @ T_cw
@@ -386,6 +523,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 S["C"] = C_tr[:, keep_mask]
                 S["F"] = F_tr[:, keep_mask]
                 S["T"] = T_tr[:, keep_mask]
+                S["frame_index"] = frame_index[keep_mask]
 
     # 4) - CANDIDATES SET UPDATE
 
@@ -423,10 +561,11 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
         if C_new.shape[1] > 0:
             T12 = T_cw.reshape(12, 1)
             T_new = np.repeat(T12, C_new.shape[1], axis=1)
-
+            frame_index_new = np.ones(C_new.shape[1], dtype=int) * (i - bootstrap_frames[1])
             S["C"] = np.hstack([S["C"], C_new])
             S["F"] = np.hstack([S["F"], C_new.copy()])
             S["T"] = np.hstack([S["T"], T_new])
+            S["frame_index"] = np.hstack([S["frame_index"], frame_index_new])
             n_new_candidates = C_new.shape[1]
 
     prev_img = img
@@ -474,4 +613,5 @@ if not visualize_frames:
         ax.legend(loc="best", frameon=True)
         fig.tight_layout()
         
+        plt.savefig("./traj")
         plt.show()
