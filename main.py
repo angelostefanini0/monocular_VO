@@ -237,8 +237,6 @@ S["F"]=C.copy()
 S["T"]=T
 
 
-print(S["T"])
-assert False
 
 prev_img = img1
 # --- Continuous operation ---
