@@ -95,7 +95,7 @@ klt_params=dict(
 )
 #goodFeaturesToTrack PARAMETERS
 max_num_corners_bootstrap=1000
-max_num_corners=500
+max_num_corners=1000
 quality_level=0.01
 min_distance=2
 #findEssentialMat PARAMETERS
