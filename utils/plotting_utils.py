@@ -245,3 +245,49 @@ def update_frame_with_points(plot_state,img_gray,P_2xN,Pprev_2xN=None,frame_idx=
 
 
 
+def plot_trajectory(traj, HAS_GT, gt_x = None, gt_z = None):
+    if len(traj) == 0:
+        print("No trajectory to plot.")
+    else:
+        traj_arr = np.array(traj)
+        
+        # Creazione figura con lo stile della funzione init_live_plots
+        fig = plt.figure(figsize=(10, 7))
+        ax = fig.add_subplot(1, 1, 1)
+        
+        # --- Estetica dello stile richiesto ---
+        ax.set_title("Estimated Trajectory (Final Result)", fontsize=14, fontweight='bold')
+        ax.set_xlabel("x [m]")
+        ax.set_ylabel("z [m]")
+        ax.axis("equal")
+        
+        # Griglia specifica: tratteggiata, sottile e semitrasparente
+        ax.grid(True, which="both", linestyle="--", linewidth=0.5, alpha=0.6)
+        
+        # --- Plot Ground Truth (se presente) ---
+        if HAS_GT and (gt_x is not None) and (gt_z is not None):
+            ax.plot(
+                gt_x, gt_z, 
+                linestyle='--', 
+                color='black', 
+                linewidth=1.0, 
+                alpha=0.7, 
+                label='Ground Truth'
+            )
+            
+        # --- Plot Traiettoria Stimata ---
+        # Usiamo il colore rosso e lo spessore 2.0 come nel tuo stile live
+        ax.plot(
+            traj_arr[:, 0], traj_arr[:, 2], 
+            color='red', 
+            linewidth=2.0, 
+            label='Estimated Trajectory'
+        )
+        
+        # Legenda e layout
+        ax.legend(loc="best", frameon=True)
+        fig.tight_layout()
+        
+        plt.savefig("./traj")
+        plt.show()
+
