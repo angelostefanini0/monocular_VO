@@ -1,3 +1,4 @@
+
 import os
 import cv2
 import numpy as np
@@ -81,7 +82,7 @@ else:
 # --- PARAMETERS ---
 
 klt_params = dict(winSize=(21, 21), maxLevel=3, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01))
-max_num_corners = 1000
+max_num_corners = 1500
 quality_level = 0.01
 min_distance = 2
 prob_essent_mat = 0.999
