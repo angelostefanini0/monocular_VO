@@ -146,7 +146,10 @@ def run_ba(buffer_frames,S,K,buffer_dim):
 
     #Build the Sparse Jacobian and do Levenberg-Marquardt
     sparse_matrix=build_sparsity(n_frames,n_points,camera_indices,point_indices)
-    res=least_squares(residual_function,x0,jac_sparsity=sparse_matrix,method='trf',x_scale='jac',args=(n_frames,n_points,camera_indices,point_indices,observations,K))
+    res=least_squares(residual_function,x0,jac_sparsity=sparse_matrix,method='trf',x_scale='jac',args=(n_frames,n_points,camera_indices,point_indices,observations,K), max_nfev=10,  ftol=1e-3,
+  xtol=1e-3,
+  gtol=1e-3,
+  verbose=0)
     x_opt=res.x
 
     opt_poses=x_opt[:n_frames*6].reshape((n_frames,6))

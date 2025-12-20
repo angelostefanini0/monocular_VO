@@ -20,15 +20,16 @@ use_BA=True
 # parking_path = "/path/to/parking"
 # own_dataset_path = "/path/to/own_dataset"
 
+
 if ds == 0:
     #threshold for bearing angle function
     ANGLE_THRESHOLD = np.deg2rad(0.1)
     bootstrap_frames = [0, 2] #frames betweem which bootstrap is performed
-    kitti_path = r"./datasets/kitti05"
+    kitti_path = r"./datasets/kitti"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
-    last_frame = 4540
-    last_frame = 1000
+    last_frame = 2670
+    last_frame = 100
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
