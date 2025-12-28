@@ -25,11 +25,11 @@ if ds == 0:
     #threshold for bearing angle function
     ANGLE_THRESHOLD = np.deg2rad(0.1)
     bootstrap_frames = [0, 2] #frames betweem which bootstrap is performed
-    kitti_path = r"./datasets/kitti"
+    kitti_path = r"./datasets/kitti05"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
     last_frame = 2670
-    last_frame = 100
+    last_frame = 1000    #TEST
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
@@ -113,8 +113,8 @@ rep_error = 3.0
 iter_count = 2000
 confidence = 0.99
 #Bundle Adjustment PARAMETERS
-buffer_dim=10
-update_freq=10
+buffer_dim=5                    #5,15 Huber,max n_fev=100 ok 15 Hz         20,10 Huber,max n_fev=100 ok 13 Hz            
+update_freq=15                  #20,50 soft_l1,max n_fev=100 12.2 Hz           5,15 Huber,no max n_fev 12 Hz
 buffer=[]
 
 
