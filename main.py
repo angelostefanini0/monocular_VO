@@ -106,15 +106,15 @@ max_num_corners=1000
 quality_level=0.01
 min_distance=2
 #findEssentialMat PARAMETERS
-prob_essent_mat=0.999
+prob_essent_mat=0.99
 thresh_essent_mat=1.0
 #PNP RANSAC PARAMETERS
 rep_error = 3.0 
 iter_count = 2000
 confidence = 0.99
 #Bundle Adjustment PARAMETERS
-buffer_dim=20                    #5,15 Huber,max n_fev=100 ok 15 Hz         20,10 Huber,max n_fev=100 ok 13 Hz            
-update_freq=5                  #20,50 soft_l1,max n_fev=100 12.2 Hz           5,15 Huber,no max n_fev 12 Hz
+buffer_dim=15                            
+update_freq=15                 
 buffer=[]
 
 
@@ -433,7 +433,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     # 5) BUNDLE ADJUSTMENT
     if use_BA:
         UPDATE_THRESHOLD=i%update_freq==0
-        if i >= bootstrap_frames[1] and UPDATE_THRESHOLD and len(buffer)==buffer_dim:
+        if i >= bootstrap_frames[1] and UPDATE_THRESHOLD:
             S = run_ba(buffer, S, K, buffer_dim)               
             if buffer_dim - 1 > 0:
                 if len(traj) >= buffer_dim - 1:
