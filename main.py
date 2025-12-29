@@ -113,8 +113,8 @@ rep_error = 3.0
 iter_count = 2000
 confidence = 0.99
 #Bundle Adjustment PARAMETERS
-buffer_dim=5                    #5,15 Huber,max n_fev=100 ok 15 Hz         20,10 Huber,max n_fev=100 ok 13 Hz            
-update_freq=15                  #20,50 soft_l1,max n_fev=100 12.2 Hz           5,15 Huber,no max n_fev 12 Hz
+buffer_dim=20                    #5,15 Huber,max n_fev=100 ok 15 Hz         20,10 Huber,max n_fev=100 ok 13 Hz            
+update_freq=5                  #20,50 soft_l1,max n_fev=100 12.2 Hz           5,15 Huber,no max n_fev 12 Hz
 buffer=[]
 
 
@@ -320,7 +320,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     if len(buffer)>buffer_dim:
         buffer.pop(0)
 
-    traj.append(cam_center_from_Tcw(T_cw))
+    # traj.append(cam_center_from_Tcw(T_cw))
 
     if visualize_frames:
         update_traj(plots,traj)
@@ -434,9 +434,19 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
     if use_BA:
         UPDATE_THRESHOLD=i%update_freq==0
         if i >= bootstrap_frames[1] and UPDATE_THRESHOLD and len(buffer)==buffer_dim:
-            S = run_ba(buffer, S, K, buffer_dim)   
+            S = run_ba(buffer, S, K, buffer_dim)               
+            if buffer_dim - 1 > 0:
+                if len(traj) >= buffer_dim - 1:
+                    #cut the last frames
+                    traj = traj[:-(buffer_dim - 1)]
+                else: #if traj is too short than buffer_dim overwrite it
+                    traj = []
+            #add optimized poses
+            for pose_data in buffer:
+                T_optimized = pose_data['pose']
+                center = cam_center_from_Tcw(T_optimized)
+                traj.append(center)
             T_cw = buffer[-1]['pose']
-     
 
     prev_img = img
 
