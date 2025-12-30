@@ -10,7 +10,7 @@ from scipy.optimize import least_squares
 
 
 class VO():
-    def __init__(self, ds = 0, use_ba = True, visualize_frames = False, args = {}):
+    def __init__(self, ds = 0, use_ba = False, visualize_frames = False, args = {}):
         self.ds = ds
         self.use_ba = use_ba
         self.visualize_frames = visualize_frames
@@ -39,9 +39,9 @@ class VO():
 
         #Bundle Adjustment PARAMETERS
         if self.use_ba:
-            self.buffer_dim = args.get("buffer_dim", 10)
+            self.buffer_dim = args.get("buffer_dim", 15)
             self.update_freq = args.get("update_freq", 10)
-            self.n_fix_ba = args.get("n_fix_ba", 2)
+            self.n_fix_ba = args.get("n_fix_ba", 3)
             self.buffer = []
 
         # --- State ---
@@ -96,7 +96,7 @@ class VO():
             self.gt=(self.gt_x, self.gt_z)
         if self.visualize_frames:
             self.plots=init_live_plots(gt=self.gt)
-        self.traj=[]
+        self.traj = np.zeros((self.last_frame + 1, 3))
         for i in range(self.bootstrap_frames[1] + 1, self.last_frame + 1):
             self.continuos_operation(i)
 
@@ -106,6 +106,8 @@ class VO():
             print(f"Processed {self.last_frame} in {end_time - start_time} sec")
             print(f"Frame rate: {Hz} Hz")
             plot_trajectory(self.traj, self.HAS_GT, self.gt_x, self.gt_z)
+            print("traj: ", len(self.traj))
+            print("gt: ", len(self.gt_x))
 
         
 
@@ -292,10 +294,15 @@ class VO():
         t_wc = -R_wc @ t_cw              
         T_wc = np.hstack([R_wc, t_wc.reshape(3, 1)])
 
-        frame_i = self.bootstrap_frames[1]
-        self.T_cw_array[frame_i] = T_CW2
-        self.T_wc_array[frame_i] = T_wc
-        self.pose_valid[frame_i] = True
+        f1 = self.bootstrap_frames[1]
+        self.T_cw_array[f1] = T_CW2
+        self.T_wc_array[f1] = T_wc
+        self.pose_valid[f1] = True
+
+        f0 = self.bootstrap_frames[0]
+        self.T_cw_array[f0] = np.hstack([np.eye(3), np.zeros((3,1))])
+        self.T_wc_array[f0] = np.hstack([np.eye(3), np.zeros((3,1))])
+        self.pose_valid[f0] = True
 
         self.prev_img = img1
 
@@ -385,13 +392,14 @@ class VO():
         current_obs = {}
         for j, lid in enumerate(ids_in):
             current_obs[lid] = P_in[j] 
-            
-        self.buffer.append({
-            'pose': T_cw.copy(), 
-            'obs': current_obs,
-            'frame_id': i })
-        if len(self.buffer)>self.buffer_dim:
-            self.buffer.pop(0)
+        
+        if self.use_ba:
+            self.buffer.append({
+                'pose': T_cw.copy(), 
+                'obs': current_obs,
+                'frame_id': i })
+            if len(self.buffer)>self.buffer_dim:
+                self.buffer.pop(0)
 
         # traj.append(cam_center_from_Tcw(T_cw))
 
@@ -499,26 +507,27 @@ class VO():
                 self.S["F"] = np.hstack([self.S["F"], C_new.copy()])
                 self.S["frame_id"] = np.hstack([self.S["frame_id"], frame_index_new])
 
+        self.traj[i] = self.cam_center_from_Tcw(T_cw)
+        
+
         # 5) BUNDLE ADJUSTMENT
         if self.use_ba:
             UPDATE_THRESHOLD= i % self.update_freq == 0
             if i >= self.bootstrap_frames[1] and UPDATE_THRESHOLD:
                 self.run_ba()               
-                if self.buffer_dim - 1 > 0:
-                    if len(self.traj) >= self.buffer_dim - 1:
-                        #cut the last frames
-                        self.traj = self.traj[:-(self.buffer_dim - 1)]
-                    else: #if traj is too short than buffer_dim overwrite it
-                        self.traj = []
+                # if self.buffer_dim - 1 > 0:
+                #     if len(self.traj) >= self.buffer_dim - 1:
+                #         #cut the last frames
+                #         self.traj = self.traj[:-(self.buffer_dim - 1)]
+                #     else: #if traj is too short than buffer_dim overwrite it
+                #         self.traj = []
                 #add optimized poses
                 for pose_data in self.buffer:
+                    frame_id = pose_data["frame_id"]
                     T_optimized = pose_data['pose']
                     center = self.cam_center_from_Tcw(T_optimized)
-                    self.traj.append(center)
+                    self.traj[frame_id] = center
                 T_cw = self.buffer[-1]['pose']
-        else:
-            self.traj.append(self.cam_center_from_Tcw(T_cw))
-            
 
         self.prev_img = img
 
@@ -622,6 +631,7 @@ class VO():
         valid_ids = valid_ids_np[final_indices].tolist()
 
         n_points = len(valid_ids)
+        print(f"FINAL VALID POINTS: {n_points}")
         id_to_local_idx = {idd: i for i, idd in enumerate(valid_ids)}
         
         camera_indices = []
@@ -716,6 +726,240 @@ class VO():
         print(f"BA: {n_frames} frames, {n_points} pts. Cost: {res.cost:.2f}")
         
         return
+    
+    def run_ba_new(self, max_points=500, z_threshold=100.0):
+        """
+        Sliding-window BA with gauge fixing:
+        - first self.n_fix_ba poses in the window are FIXED (not optimized)
+        - remaining poses + 3D points are optimized
+        Updates:
+        - self.buffer[*]['pose'] (3x4) for optimized frames (fixed frames unchanged)
+        - self.T_cw_array / self.T_wc_array for optimized frames
+        - self.S["X"] for optimized points
+        """
+        print("BUFFER FRAMES", len(self.buffer))
+
+        n_fix = int(getattr(self, "n_fix_ba", 2))  # e.g. 2
+        if len(self.buffer) < max(n_fix + 1, 2):
+            return
+
+        start_idx = max(0, len(self.buffer) - self.buffer_dim)
+        window_frames = self.buffer[start_idx:]
+        n_frames = len(window_frames)
+
+        if n_frames <= n_fix:
+            return
+
+        print(f"optimizing {n_frames} frames (fixing first {n_fix})")
+
+        # ---- Collect valid landmark ids observed in the window ----
+        observed_ids = set().union(*(f['obs'].keys() for f in window_frames))
+        global_id_map = {idd: i for i, idd in enumerate(self.S["ids"])}
+        valid_ids = sorted([idd for idd in observed_ids if idd in global_id_map])
+
+        if not valid_ids:
+            print("No valid ID")
+            return
+
+        # ---- Filter points by depth in last pose (must be in front and not too far) ----
+        candidate_global_indices = [global_id_map[id] for id in valid_ids]
+        points_3d_world = self.S["X"][:, candidate_global_indices]  # 3 x N
+
+        last_pose = window_frames[-1]['pose']  # expected 3x4
+        R_cw_last = last_pose[:3, :3]
+        t_cw_last = last_pose[:3, 3]
+        depth = R_cw_last[2, :] @ points_3d_world + t_cw_last[2]
+
+        close_enough_indices = np.where((depth > 0.1) & (depth < z_threshold))[0]
+        if close_enough_indices.size == 0:
+            print("NO close enough indices")
+            return
+
+        if close_enough_indices.size > max_points:
+            surviving_z = depth[close_enough_indices]
+            top_k_local = np.argsort(surviving_z)[:max_points]
+            final_indices = close_enough_indices[top_k_local]
+        else:
+            final_indices = close_enough_indices
+
+        valid_ids = np.array(valid_ids)[final_indices].tolist()
+
+        n_points = len(valid_ids)
+        id_to_local_idx = {idd: i for i, idd in enumerate(valid_ids)}
+
+        # ---- Build observation lists ----
+        camera_indices_global = []
+        point_indices = []
+        observations = []
+
+        x0_cameras = np.zeros((n_frames, 6))
+        for i, frame in enumerate(window_frames):
+            x0_cameras[i] = self.HomogMatrix2twist(frame['pose'])
+            for lm_id, uv in frame['obs'].items():
+                if lm_id in id_to_local_idx:
+                    camera_indices_global.append(i)  # 0..n_frames-1 (includes fixed)
+                    point_indices.append(id_to_local_idx[lm_id])
+                    observations.append(uv)
+
+        if len(camera_indices_global) == 0:
+            print("NO camera indices")
+            return
+
+        camera_indices_global = np.asarray(camera_indices_global, dtype=int)
+        point_indices = np.asarray(point_indices, dtype=int)
+        observations = np.asarray(observations, dtype=float)
+
+        # ---- Pack parameters: (free camera params) + (3D points) ----
+        global_indices = [global_id_map[id] for id in valid_ids]
+        x0_points = self.S["X"][:, global_indices].T.flatten()  # (n_points*3,)
+
+        x0_cameras_fixed = x0_cameras[:n_fix].copy()            # (n_fix, 6)
+        x0_cameras_free = x0_cameras[n_fix:].copy()             # (n_frames-n_fix, 6)
+
+        x0 = np.hstack((x0_cameras_free.flatten(), x0_points))
+
+        # ---- Precompute weights using initial poses (fixed+free) ----
+        # Build Rs, ts for ALL cameras from x0 (fixed + initial free)
+        Rs_init = np.zeros((n_frames, 3, 3))
+        ts_init = np.zeros((n_frames, 3))
+
+        for i in range(n_fix):
+            rvec = x0_cameras_fixed[i, :3]
+            Rs_init[i], _ = cv2.Rodrigues(rvec)
+            ts_init[i] = x0_cameras_fixed[i, 3:]
+
+        for i in range(n_fix, n_frames):
+            rvec = x0_cameras_free[i - n_fix, :3]
+            Rs_init[i], _ = cv2.Rodrigues(rvec)
+            ts_init[i] = x0_cameras_free[i - n_fix, 3:]
+
+        pts_3d_init = x0_points.reshape((n_points, 3))
+        R_obs_init = Rs_init[camera_indices_global]
+        t_obs_init = ts_init[camera_indices_global]
+        p_obs_init = pts_3d_init[point_indices]
+
+        z_obs_values = np.einsum('ij,ij->i', R_obs_init[:, 2, :], p_obs_init) + t_obs_init[:, 2]
+        z_obs_values = np.maximum(z_obs_values, 0.5)  # avoid huge weights
+        obs_weights = 1.0 / z_obs_values
+
+
+        # ---- Sparsity (only FREE cameras are variables) ----
+        n_poses_free = n_frames - n_fix
+        # Map global camera index -> free camera index (or -1 if fixed)
+        cam_free_idx = camera_indices_global - n_fix
+        obs_mask_free = cam_free_idx >= 0
+
+        camera_indices_free = cam_free_idx[obs_mask_free]
+        point_indices_free = point_indices[obs_mask_free]
+        # Note: sparsity is built only for residual rows that depend on free cameras;
+        # residuals for fixed-camera observations will only depend on points.
+        # We'll build a custom sparsity below for all residuals.
+
+        m = camera_indices_global.size * 2
+        n = n_poses_free * 6 + n_points * 3
+        sparse_matrix = lil_matrix((m, n), dtype=int)
+
+        obs_i = np.arange(camera_indices_global.size)
+
+        # Camera part: only if observation uses a free camera
+        free_obs = (camera_indices_global >= n_fix)
+        obs_i_free = obs_i[free_obs]
+        cam_i_free = (camera_indices_global[free_obs] - n_fix)
+
+        for k in range(6):
+            sparse_matrix[2 * obs_i_free, cam_i_free * 6 + k] = 1
+            sparse_matrix[2 * obs_i_free + 1, cam_i_free * 6 + k] = 1
+
+        # Point part: always
+        for k in range(3):
+            col = n_poses_free * 6 + point_indices * 3 + k
+            sparse_matrix[2 * obs_i, col] = 1
+            sparse_matrix[2 * obs_i + 1, col] = 1
+
+        # ---- Residual function that uses fixed + free cameras ----
+        def residual_function_fixed_gauge(params):
+            # unpack
+            cam_free = params[:n_poses_free * 6].reshape((n_poses_free, 6))
+            pts = params[n_poses_free * 6:].reshape((n_points, 3))
+
+            # assemble all camera params
+            cam_all = np.zeros((n_frames, 6))
+            cam_all[:n_fix] = x0_cameras_fixed
+            cam_all[n_fix:] = cam_free
+
+            rvecs = cam_all[:, :3]
+            tvecs = cam_all[:, 3:]
+
+            # Rodrigues for all
+            Rs = np.zeros((n_frames, 3, 3))
+            for i in range(n_frames):
+                Rs[i], _ = cv2.Rodrigues(rvecs[i])
+
+            R_obs = Rs[camera_indices_global]
+            t_obs = tvecs[camera_indices_global]
+            p_obs = pts[point_indices]
+
+            P_cam = np.einsum('kij,kj->ki', R_obs, p_obs) + t_obs
+
+            fx, fy = self.K[0, 0], self.K[1, 1]
+            cx, cy = self.K[0, 2], self.K[1, 2]
+
+            z = P_cam[:, 2]
+            z = np.where(z > 1e-6, z, 1e-6)  # avoid div0
+
+            u = fx * (P_cam[:, 0] / z) + cx
+            v = fy * (P_cam[:, 1] / z) + cy
+
+            proj = np.column_stack([u, v])
+            res = (proj - observations) * obs_weights[:, None]
+            return res.ravel()
+
+        # ---- Solve ----
+        res = least_squares(
+            residual_function_fixed_gauge, x0,
+            jac_sparsity=sparse_matrix,
+            method='trf', x_scale='jac',
+            ftol=1e-3, xtol=1e-3, gtol=1e-3,
+            verbose=0, loss='huber', f_scale=1.5, max_nfev=50
+        )
+
+        x_opt = res.x
+        opt_cam_free = x_opt[:n_poses_free * 6].reshape((n_poses_free, 6))
+        opt_points = x_opt[n_poses_free * 6:].reshape((n_points, 3))
+
+        # ---- Write back optimized FREE poses to buffer + global arrays ----
+        for k_free in range(n_poses_free):
+            k_global = n_fix + k_free
+            entry = window_frames[k_global]
+            frame_idx = entry['frame_id']  # must exist in buffer entries
+
+            T_cw_opt = self.Twist2HomogMatrix(opt_cam_free[k_free])[:3, :]
+            entry['pose'] = T_cw_opt
+            self.T_cw_array[frame_idx] = T_cw_opt
+
+            R = T_cw_opt[:, :3]
+            t = T_cw_opt[:, 3]
+            T_wc_opt = np.hstack([R.T, (-R.T @ t).reshape(3, 1)])
+            self.T_wc_array[frame_idx] = T_wc_opt
+            self.pose_valid[frame_idx] = True
+
+        # Fixed poses remain unchanged; ensure arrays are consistent for them too
+        for k in range(min(n_fix, n_frames)):
+            entry = window_frames[k]
+            frame_idx = entry['frame_id']
+            T_cw_fix = entry['pose'][:3, :]
+            self.T_cw_array[frame_idx] = T_cw_fix
+            R = T_cw_fix[:, :3]
+            t = T_cw_fix[:, 3]
+            self.T_wc_array[frame_idx] = np.hstack([R.T, (-R.T @ t).reshape(3, 1)])
+            self.pose_valid[frame_idx] = True
+
+        # ---- Update 3D points in state ----
+        self.S["X"][:, global_indices] = opt_points.T
+
+        print(f"BA(fixed {n_fix}): {n_frames} frames, {n_points} pts. Cost: {res.cost:.2f}")
+        return
+
 
 
     def build_sparsity(self, n_poses,n_points, camera_indices, point_indices):
