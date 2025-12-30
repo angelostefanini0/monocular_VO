@@ -11,7 +11,7 @@ import time
 # --- Setup ---
 ds = 0  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 visualize_frames = False
-use_BA=True
+use_BA=False
 
 # Define dataset paths
 # (Set these variables before running)
@@ -25,11 +25,11 @@ if ds == 0:
     #threshold for bearing angle function
     ANGLE_THRESHOLD = np.deg2rad(0.1)
     bootstrap_frames = [0, 2] #frames betweem which bootstrap is performed
-    kitti_path = r"./datasets/kitti05"
+    kitti_path = r"./datasets/kitti"
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
     last_frame = 2670
-    # last_frame = 1000    #TEST
+    last_frame = 1000    #TEST
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
@@ -447,6 +447,8 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 center = cam_center_from_Tcw(T_optimized)
                 traj.append(center)
             T_cw = buffer[-1]['pose']
+    else:
+        traj.append(cam_center_from_Tcw(T_cw))
 
     prev_img = img
 
