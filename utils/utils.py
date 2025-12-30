@@ -109,6 +109,7 @@ def residual_function(params, n_frames, n_points, camera_indices, point_indices,
     return residuals.ravel()
 
 def run_ba(buffer_frames, S, K, buffer_dim, max_points=500, z_threshold=100.0):
+    print("BUFFER FRAMES", buffer_frames)
     if len(buffer_frames) < 2: return S
     
     start_idx = max(0, len(buffer_frames) - buffer_dim)
