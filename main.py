@@ -507,9 +507,9 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
             S["T"] = np.hstack([S["T"], T_new])
             S["frame_index"] = np.hstack([S["frame_index"], frame_index_new])
 
-    # -------------------------------------------------------------------------
-    # 5) BUNDLE ADJUSTMENT
     # ------------------------------------------------------------------------
+    # 5) BUNDLE ADJUSTMENT
+    # -----------------------------------------------------------------------
     if use_BA:
         UPDATE_THRESHOLD = i % update_freq == 0
         if i >= bootstrap_frames[1] and UPDATE_THRESHOLD:
