@@ -11,7 +11,7 @@ import time
 # --- Setup ---
 ds = 0  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 visualize_frames = False
-use_BA=False
+use_BA=True
 
 # Define dataset paths
 # (Set these variables before running)
@@ -29,7 +29,7 @@ if ds == 0:
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
     last_frame = 2670
-    last_frame = 1000    #TEST
+    last_frame = 101    #TEST
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
@@ -113,8 +113,8 @@ rep_error = 3.0
 iter_count = 2000
 confidence = 0.99
 #Bundle Adjustment PARAMETERS
-buffer_dim=10                          
-update_freq=10               
+buffer_dim=15                          
+update_freq=10             
 buffer=[]
 
 
@@ -431,6 +431,7 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
             n_new_candidates = C_new.shape[1]
 
     # 5) BUNDLE ADJUSTMENT
+    traj.append(cam_center_from_Tcw(T_cw))
     if use_BA:
         UPDATE_THRESHOLD=i%update_freq==0
         if i >= bootstrap_frames[1] and UPDATE_THRESHOLD:
@@ -447,8 +448,8 @@ for i in range(bootstrap_frames[1] + 1, last_frame + 1):
                 center = cam_center_from_Tcw(T_optimized)
                 traj.append(center)
             T_cw = buffer[-1]['pose']
-    else:
-        traj.append(cam_center_from_Tcw(T_cw))
+    # else:
+    #     traj.append(cam_center_from_Tcw(T_cw))
 
     prev_img = img
 
@@ -458,6 +459,8 @@ if not visualize_frames:
     Hz = last_frame/(end_time - start_time)
     print(f"Processed {last_frame} in {end_time - start_time} sec")
     print(f"Frame rate: {Hz} Hz")
+    print(len(traj))
     plot_trajectory(traj, HAS_GT, gt_x, gt_z)
+
 
 

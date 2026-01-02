@@ -44,7 +44,7 @@ class VO():
             self.n_fix_ba = args.get("n_fix_ba", 1)
             self.min_frame_count = args.get("min_frame_count", 3)
             self.max_num_ba_points = args.get("max_num_ba_points", 5000)
-            self.z_thresholt_ba = args.get("z_thresholt_ba", 1000.0)
+            self.z_thresholt_ba = args.get("z_thresholt_ba", 5000)
             self.buffer = []
 
         # --- State ---
@@ -1060,8 +1060,7 @@ class VO():
     #     return ((np.column_stack([u, v]) - observed_points) * weights[:, np.newaxis]).ravel()
 
 def main():
-    ds = 0
-    vo = VO(ds = ds, use_ba=True, visualize_frames= False)
+    vo = VO(use_ba=True, visualize_frames= False)
     args = {
         "min_frame_count" : 3
     }
