@@ -413,14 +413,35 @@ class VO():
 
         # traj.append(cam_center_from_Tcw(T_cw))
 
+
+
+
+        self.traj[i] = self.cam_center_from_Tcw(T_cw)
+        
+
+        # 5) BUNDLE ADJUSTMENT
+        if self.use_ba:
+            UPDATE_THRESHOLD= i % self.update_freq == 0
+            if i >= self.bootstrap_frames[1] and UPDATE_THRESHOLD:
+                self.run_ba()               
+                for pose_data in self.buffer:
+                    frame_id = pose_data["frame_id"]
+                    T_optimized = pose_data['pose']
+                    center = self.cam_center_from_Tcw(T_optimized)
+                    self.traj[frame_id] = center
+                T_cw = self.buffer[-1]['pose']
+
+
         if self.visualize_frames:
-            update_traj(self.plots,self.traj)
+            update_traj(self.plots,self.traj[:i+1])
             update_world(self.plots,T_cw,self.S["X"])
             update_frame_with_points(self.plots,img,self.S["P"],P_prev_for_plot,frame_idx=i)
 
             self.plots["fig"].canvas.draw()
             self.plots["fig"].canvas.flush_events()
-            plt.pause(0.001)
+            plt.pause(0.0001)
+
+
 
         # 3) - 3D MAP COUNTINUOUS UPDATE: in this section we analyze each element of C, which is the set of candidates
         #keypoints. If they satisfy approrpiate conditions, they are triangulated and moved from C to P, and added to X
@@ -495,6 +516,7 @@ class VO():
                     self.S["F"] = F_tr[:, keep_mask]
                     # S["T"] = T_tr[:, keep_mask]
                     self.S["frame_id"] = frame_id_tr[keep_mask]
+                
 
         # 4) - CANDIDATES SET UPDATE
 
@@ -519,27 +541,8 @@ class VO():
                 self.S["F"] = np.hstack([self.S["F"], C_new.copy()])
                 self.S["frame_id"] = np.hstack([self.S["frame_id"], frame_index_new])
 
-        self.traj[i] = self.cam_center_from_Tcw(T_cw)
-        
 
-        # 5) BUNDLE ADJUSTMENT
-        if self.use_ba:
-            UPDATE_THRESHOLD= i % self.update_freq == 0
-            if i >= self.bootstrap_frames[1] and UPDATE_THRESHOLD:
-                self.run_ba()               
-                # if self.buffer_dim - 1 > 0:
-                #     if len(self.traj) >= self.buffer_dim - 1:
-                #         #cut the last frames
-                #         self.traj = self.traj[:-(self.buffer_dim - 1)]
-                #     else: #if traj is too short than buffer_dim overwrite it
-                #         self.traj = []
-                #add optimized poses
-                for pose_data in self.buffer:
-                    frame_id = pose_data["frame_id"]
-                    T_optimized = pose_data['pose']
-                    center = self.cam_center_from_Tcw(T_optimized)
-                    self.traj[frame_id] = center
-                T_cw = self.buffer[-1]['pose']
+
 
         self.prev_img = img
 
@@ -789,7 +792,8 @@ class VO():
 
         close_enough_indices = np.where((depth > 0.1) & (depth < z_threshold))[0]
         # for S["count"] : # take the ones already present in the last but one frame (to have the same dimension)
-        preliminary_indices = np.where((depth > 0.1) & (depth < z_threshold) & (self.S["count"][self.S["count"] > 1] >= self.min_frame_count))[0]
+        # preliminary_indices = np.where((depth > 0.1) & (depth < z_threshold) & (self.S["count"][self.S["count"] > 1] >= self.min_frame_count))[0]
+        preliminary_indices = np.where((depth > 0.1) & (depth < z_threshold) & (self.S["count"] >= self.min_frame_count))[0]
         # print(close_enough_indices)
         # print(preliminary_indices)
         # quit()
@@ -1061,10 +1065,14 @@ class VO():
 
 def main():
     ds = 0
-    vo = VO(ds = ds, use_ba=True, visualize_frames= False)
+    vo = VO(ds = ds, use_ba=True, visualize_frames= True)
     args = {
-        "min_frame_count" : 3
+        "buffer_dim" : 8,
+        "update_freq" : 7,
+        "n_fix_ba": 1,
+        "min_frame_count" : 4,
     }
+
     vo.run()
 
 if __name__ == "__main__":
