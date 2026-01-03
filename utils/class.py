@@ -45,6 +45,7 @@ class VO():
             self.min_frame_count = args.get("min_frame_count", 3)
             self.max_num_ba_points = args.get("max_num_ba_points", 5000)
             self.z_thresholt_ba = args.get("z_thresholt_ba", 1000.0)
+            self.ba_tol = args.get("ba_tol", 1)
             self.buffer = []
 
         # --- State ---
@@ -418,7 +419,7 @@ class VO():
 
         self.traj[i] = self.cam_center_from_Tcw(T_cw)
         
-
+        old_traj = self.traj.copy()
         # 5) BUNDLE ADJUSTMENT
         if self.use_ba:
             UPDATE_THRESHOLD= i % self.update_freq == 0
@@ -430,6 +431,9 @@ class VO():
                     center = self.cam_center_from_Tcw(T_optimized)
                     self.traj[frame_id] = center
                 T_cw = self.buffer[-1]['pose']
+
+                print(np.linalg.norm(old_traj - self.traj))
+   
 
 
         if self.visualize_frames:
@@ -588,161 +592,6 @@ class VO():
         cos_angles = np.sum(v0_w * v1_w, axis=0)
         return np.arccos(np.clip(cos_angles, -1.0, 1.0))
     
-    
-    # def run_ba_old(self, max_points=500, z_threshold=1000.0):
-    #     """
-    #     Deve modificare:
-    #         self.S
-    #         self.T_wc
-    #         self.T_cw
-    #         self.traj
-    #         self.buffer
-
-    #     """
-    #     print("BUFFER FRAMES", len(self.buffer))
-        
-    #     if len(self.buffer) < self.n_fix_ba: 
-    #         return
-        
-    #     start_idx = max(0, len(self.buffer) - self.buffer_dim)
-    #     window_frames = self.buffer[start_idx:]
-    #     n_frames = len(window_frames)
-    #     print(f"optimizing {n_frames} frames")
-
-    #     # ID mapping
-    #     observed_ids = set().union(*(f['obs'].keys() for f in window_frames))
-        
-    #     global_id_map = {idd: i for i, idd in enumerate(self.S["ids"])}
-    #     valid_ids = sorted([idd for idd in observed_ids if idd in global_id_map])
-        
-    #     if not valid_ids:
-    #         print("No valid ID")
-    #         return 
-
-    #     candidate_global_indices = [global_id_map[id] for id in valid_ids]
-    #     points_3d_world = self.S["X"][:, candidate_global_indices] 
-        
-    #     last_pose = window_frames[-1]['pose']
-    #     R_cw_last = last_pose[:3, :3]
-    #     t_cw_last = last_pose[:3, 3]
-        
-    #     # Calculate depth
-    #     depth = R_cw_last[2, :] @ points_3d_world + t_cw_last[2]
-
-    #     close_enough_indices = np.where(depth < z_threshold)[0]
-        
-    #     if close_enough_indices.size == 0:
-    #         print("NO close enough indices")
-    #         return
-
-    #     if close_enough_indices.size > max_points:
-    #         surviving_z = depth[close_enough_indices]
-    #         # top_k_local = np.argsort(surviving_z)[:max_points]
-    #         # final_indices = close_enough_indices[top_k_local]
-    #         random_selection = np.random.choice(close_enough_indices.size, size=max_points, replace=False)
-    #         final_indices = close_enough_indices[random_selection]
-    #     else:
-    #         final_indices = close_enough_indices
-
-    #     valid_ids_np = np.array(valid_ids)
-    #     valid_ids = valid_ids_np[final_indices].tolist()
-
-    #     n_points = len(valid_ids)
-    #     print(f"FINAL VALID POINTS: {n_points}")
-    #     id_to_local_idx = {idd: i for i, idd in enumerate(valid_ids)}
-        
-    #     camera_indices = []
-    #     point_indices = []
-    #     observations = []
-
-    #     x0_cameras = np.zeros((n_frames, 6))
-
-    #     for i, frame in enumerate(window_frames):
-    #         x0_cameras[i] = self.HomogMatrix2twist(frame['pose'])
-    #         f_ids = list(frame['obs'].keys())
-    #         f_uvs = list(frame['obs'].values())
-            
-    #         for j, id in enumerate(f_ids):
-    #             if id in id_to_local_idx:
-    #                 camera_indices.append(i)
-    #                 point_indices.append(id_to_local_idx[id])
-    #                 observations.append(f_uvs[j])
-
-    #     if not camera_indices:
-    #         print("NO camera indices")
-    #         return 
-
-    #     camera_indices = np.array(camera_indices, dtype=int)
-    #     point_indices = np.array(point_indices, dtype=int)
-    #     observations = np.array(observations)
-
-    #     global_indices = [global_id_map[id] for id in valid_ids]
-    #     x0_points = self.S["X"][:, global_indices].T.flatten()
-        
-    #     x0 = np.hstack((x0_cameras.flatten(), x0_points))
-
-
-
-    #     Rs_init = np.zeros((n_frames, 3, 3))
-    #     for i in range(n_frames):
-    #         rvec_init = x0_cameras[i, :3]
-    #         Rs_init[i], _ = cv2.Rodrigues(rvec_init)
-        
-    #     ts_init = x0_cameras[:, 3:]
-        
-    #     pts_3d_init = x0_points.reshape((n_points, 3))
-
-    #     R_obs_init = Rs_init[camera_indices]
-    #     t_obs_init = ts_init[camera_indices]
-    #     p_obs_init = pts_3d_init[point_indices]
-
-    #     z_obs_values = np.einsum('ij,ij->i', R_obs_init[:, 2, :], p_obs_init) + t_obs_init[:, 2]
-        
-    #     # Clip z for stability
-    #     z_obs_values = np.maximum(z_obs_values, 0.1)
-        
-    #     # WEIGHTS
-    #     obs_weights = 1.0 / z_obs_values
-
-    #     sparse_matrix = self.build_sparsity(n_frames, n_points, camera_indices, point_indices)
-        
-    #     res = least_squares(
-    #         self.residual_function, x0, 
-    #         jac_sparsity=sparse_matrix, 
-    #         method='trf', 
-    #         x_scale='jac',
-    #         args=(n_frames, n_points, camera_indices, point_indices, observations, self.K, obs_weights),
-    #         ftol=1e-3, xtol=1e-3, gtol=1e-3, 
-    #         verbose=0, loss='huber', f_scale=1.5, max_nfev=50
-    #     )
-
-    #     x_opt = res.x
-    #     opt_poses = x_opt[:n_frames*6].reshape((n_frames, 6))
-    #     opt_points = x_opt[n_frames*6:].reshape((n_points, 3))
-
-    #     # for i in range(n_frames):
-    #     #     self.buffer[start_idx+i]['pose'] = self.Twist2HomogMatrix(opt_poses[i])
-
-    #     for k in range(n_frames):
-    #         entry = self.buffer[start_idx + k]
-    #         frame_idx = entry['frame_id']
-
-    #         T_cw_opt = self.Twist2HomogMatrix(opt_poses[k])[:3, :]
-    #         entry['pose'] = T_cw_opt
-
-    #         self.T_cw_array[frame_idx] = T_cw_opt
-
-    #         R = T_cw_opt[:, :3]
-    #         t = T_cw_opt[:, 3]
-    #         T_wc_opt = np.hstack([R.T, (-R.T @ t).reshape(3, 1)])
-
-    #         self.T_wc_array[frame_idx] = T_wc_opt
-    #         self.pose_valid[frame_idx] = True
-
-    #     self.S["X"][:, global_indices] = opt_points.T
-    #     print(f"BA: {n_frames} frames, {n_points} pts. Cost: {res.cost:.2f}")
-        
-    #     return
     
     def run_ba(self):
         """
@@ -946,16 +795,20 @@ class VO():
             res = (proj - observations) * obs_weights[:, None]
             return res.ravel()
 
+        f0 = residual_function_fixed_gauge(x0)
+        cost0 = 0.5 * np.dot(f0, f0)
+        print("cost0:", cost0)
         # ---- Solve ----
         res = least_squares(
             residual_function_fixed_gauge, x0,
             jac_sparsity=sparse_matrix,
             method='trf', x_scale='jac',
-            ftol=1e-3, xtol=1e-3, gtol=1e-3,
+            ftol=self.ba_tol, xtol=self.ba_tol, gtol=self.ba_tol,
             verbose=0, loss='huber', f_scale=1.5, max_nfev=50
         )
-
         x_opt = res.x
+        print("cost:", res.cost, "nfev:", res.nfev, "status:", res.status)
+
         opt_cam_free = x_opt[:n_poses_free * 6].reshape((n_poses_free, 6))
         opt_points = x_opt[n_poses_free * 6:].reshape((n_points, 3))
 
@@ -1044,35 +897,20 @@ class VO():
         return residuals.ravel()
     
 
-    # def residual_function(self, params, n_frames, n_points, camera_indices, point_indices, observed_points, K, weights):
-    #     cp = params[:n_frames * 6].reshape((n_frames, 6))
-    #     p3d = params[n_frames * 6:].reshape((n_points, 3))
-
-    #     # Calcolo rapido rotazioni (evitiamo loop Python ove possibile)
-    #     # Se puoi, usa librerie come 'pylie' o scrivi una funzione Rodrigues vettorizzata in numpy
-    #     Rs = np.array([cv2.Rodrigues(r)[0] for r in cp[:, :3]]) 
-    #     ts = cp[:, 3:]
-
-    #     # Proiezione batch (Einsum è ottimo)
-    #     P_cam = np.einsum('kij,kj->ki', Rs[camera_indices], p3d[point_indices]) + ts[camera_indices]
-
-    #     # Proiezione prospettica senza divisioni ridondanti
-    #     z = P_cam[:, 2] + 1e-6
-    #     u = K[0, 0] * P_cam[:, 0] / z + K[0, 2]
-    #     v = K[1, 1] * P_cam[:, 1] / z + K[1, 2]
-
-    #     return ((np.column_stack([u, v]) - observed_points) * weights[:, np.newaxis]).ravel()
-
 def main():
     ds = 0
-    vo = VO(ds = ds, use_ba=True, visualize_frames= True)
+    use_ba = True
+    visualize_frames = False
     args = {
         "buffer_dim" : 8,
         "update_freq" : 7,
         "n_fix_ba": 1,
-        "min_frame_count" : 4,
+        "min_frame_count" : 3,
+        "max_num_ba_points" : 5000,
+        "ba_tol" : 1e-3
     }
 
+    vo = VO(ds = ds, use_ba=use_ba, visualize_frames= visualize_frames, args=args)
     vo.run()
 
 if __name__ == "__main__":
