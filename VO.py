@@ -44,8 +44,9 @@ class VO():
             self.n_fix_ba = args.get("n_fix_ba", 1)
             self.min_frame_count = args.get("min_frame_count", 3)
             self.max_num_ba_points = args.get("max_num_ba_points", 5000)
-            self.z_threshold_ba = args.get("z_threshold_ba", 100.0)
+            self.z_threshold_ba = args.get("z_threshold_ba", [1.0, 100.0])
             self.ba_tol = args.get("ba_tol", 1e-3)
+            self.max_nfev = args.get("max_nfev", 1e-3)
             self.buffer = []
 
         # --- State ---
@@ -112,8 +113,6 @@ class VO():
             print(f"Processed {self.last_frame} in {end_time - start_time} sec")
             print(f"Frame rate: {Hz} Hz")
             plot_trajectory(self.traj, self.HAS_GT, self.gt_x, self.gt_z)
-            print("traj: ", len(self.traj))
-            print("gt: ", len(self.gt_x))
 
         
 
@@ -127,7 +126,7 @@ class VO():
             ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
             ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
             self.last_frame = 2670
-            # self.last_frame = 500    #TEST
+            # self.last_frame = 200 #TEST
             self.K = np.array([
                 [7.18856e+02, 0, 6.071928e+02],
                 [0, 7.18856e+02, 1.852157e+02],
@@ -178,7 +177,7 @@ class VO():
             self.bootstrap_frames = [0, 15] #frames betweem which bootstrap is performed
             self.HAS_GT=False
             self.gt_x=self.gt_z=None
-            self.last_frame = 602
+            self.last_frame = 600
             self.dataset_path = r"./datasets/our_dataset7"
             self.K = np.array([
                 [1109.7, 0, 637.5062],
@@ -336,15 +335,13 @@ class VO():
             print(f"Warning: could not read {image_path}")
             return
         
-        # P_prev_state=self.S["P"].copy() #2xN_prev (positions in prev_img)
-        print(f'Original number of points: {self.S["P"].shape[1]}')
         # 1) - track keypoints from previous frame, that are already associated to a landmark
         P_prev =  self.P2xN_to_klt(self.S["P"]) # Nx1x2
         X_prev = self.S["X"].T.astype(np.float32) # Nx3
-        #track with klt
+        # track with klt
         P_tr, st, _ = cv2.calcOpticalFlowPyrLK(self.prev_img, img, P_prev, None, **self.klt_params)
         st = st.reshape(-1).astype(bool)
-        #filter out keypoints for which tracking fails, and also corresponding landmarks
+        # filter out keypoints for which tracking fails, and also corresponding landmarks
         P_tr = P_tr.reshape(-1, 2)[st] # Nx2
         X_tr = X_prev[st] # Nx3
         ids_tr = self.S["ids"][st] #tracks indexes for BA
@@ -412,15 +409,11 @@ class VO():
             if len(self.buffer)>self.buffer_dim:
                 self.buffer.pop(0)
 
-        # traj.append(cam_center_from_Tcw(T_cw))
-
-
 
 
         self.traj[i] = self.cam_center_from_Tcw(T_cw)
         
-        old_traj = self.traj.copy()
-        # 5) BUNDLE ADJUSTMENT
+        # 3) BUNDLE ADJUSTMENT
         if self.use_ba:
             UPDATE_THRESHOLD= i % self.update_freq == 0
             if i >= self.bootstrap_frames[1] and UPDATE_THRESHOLD:
@@ -432,9 +425,7 @@ class VO():
                     self.traj[frame_id] = center
                 T_cw = self.buffer[-1]['pose']
 
-                print(np.linalg.norm(old_traj - self.traj))
    
-
 
         if self.visualize_frames:
             update_traj(self.plots,self.traj[:i+1])
@@ -447,7 +438,7 @@ class VO():
 
 
 
-        # 3) - 3D MAP COUNTINUOUS UPDATE: in this section we analyze each element of C, which is the set of candidates
+        # 4) - 3D MAP COUNTINUOUS UPDATE: in this section we analyze each element of C, which is the set of candidates
         #keypoints. If they satisfy approrpiate conditions, they are triangulated and moved from C to P, and added to X
         if self.S["C"].shape[1] > 0:
             C_prev =  self.P2xN_to_klt(self.S["C"]) # Mx1x2
@@ -470,8 +461,6 @@ class VO():
                 #stiamo consideranod T_CW_f
 
                 all_angles = self.compute_all_angles(F_tr, C_tr, frame_id_tr, T_cw)
-
-                mask_angle = all_angles > self.ANGLE_THRESHOLD
 
                 for idx in range(C_tr.shape[1]):
                     c = C_tr[:, idx]
@@ -512,8 +501,9 @@ class VO():
                     self.S["count"] = np.hstack([self.S["count"], np.ones(new_X.shape[1])])
                     self.next_landmark_id += new_X.shape[1]
                     print(f"Added {new_P.shape[1]} new points")
-                    #remove triangulated points from C, F and T
+
                 if C_tr.shape[1] > 0:
+                    #remove triangulated points from C, F and T
                     keep_mask = np.ones(C_tr.shape[1], dtype=bool)
                     keep_mask[promoted_idx] = False
                     self.S["C"] = C_tr[:, keep_mask]
@@ -522,20 +512,17 @@ class VO():
                     self.S["frame_id"] = frame_id_tr[keep_mask]
                 
 
-        # 4) - CANDIDATES SET UPDATE
+        # 5) - CANDIDATES SET UPDATE
 
-        # Crea una maschera bianca (tutti 1) grande quanto l'immagine
+        # we create a mask so that Shi-Tomasi looks for corners distant enough from features already found
         mask_cv = np.ones(img.shape, dtype=np.uint8) * 255
-
-        # Per ogni punto già esistente in S["P"] e S["C"], disegna un cerchio nero (0)
+        # For every point in S["P"] and S["C"] we draw a black circle with radius min_distance + 1
         for pt in self.S["P"].T:
             cv2.circle(mask_cv, tuple(pt.astype(int)), self.min_distance + 1, 0, -1)
         for pt in self.S["C"].T:
             cv2.circle(mask_cv, tuple(pt.astype(int)), self.min_distance + 1, 0, -1)
 
-        # Chiedi a OpenCV di trovare i punti solo dove la maschera è bianca (255)
         new_corners = cv2.goodFeaturesToTrack(img, self.max_num_corners, self.quality_level, self.min_distance, mask=mask_cv)
-        # new_corners = cv2.goodFeaturesToTrack(img, max_num_corners, quality_level, min_distance)
         if new_corners is not None:
             C_new = self.klt_to_P2xN(new_corners.astype(np.float32))
 
@@ -544,8 +531,6 @@ class VO():
                 self.S["C"] = np.hstack([self.S["C"], C_new])
                 self.S["F"] = np.hstack([self.S["F"], C_new.copy()])
                 self.S["frame_id"] = np.hstack([self.S["frame_id"], frame_index_new])
-
-
 
 
         self.prev_img = img
@@ -559,36 +544,24 @@ class VO():
         R_cw = T_cw[:3, :3]
         R_wc = R_cw.T  
 
-        # 2. Back-projection
+        # Homogeneous coordinates
         F_h = np.vstack([F_tr, np.ones(N)])
         C_h = np.vstack([C_tr, np.ones(N)])
         
         v0_cam = self.K_inv @ F_h
         v1_cam = self.K_inv @ C_h
 
-        # Normalizzazione lungo l'asse delle coordinate (asse 0, ovvero le righe x,y,z)
+        # Normalization
         v0_cam /= np.linalg.norm(v0_cam, axis=0, keepdims=True)
         v1_cam /= np.linalg.norm(v1_cam, axis=0, keepdims=True)
 
-        # 3. Rotazione World
-        # Frame corrente (v1_w)
-        v1_w = R_wc @ v1_cam  # (3, 3) @ (3, N) -> (3, N)
-
-        # Frame di origine (v0_w)
-        # Estraiamo R0 per ogni punto
+        v1_w = R_wc @ v1_cam 
         all_R0 = self.T_wc_array[frame_index][:, :3, :3]
-
-
-        # Prepariamo v0_cam per la moltiplicazione batch: (N, 3, 1)
         v0_cam_batch = v0_cam.T.reshape(N, 3, 1)
-        
-        # Moltiplicazione batch: (N, 3, 3) @ (N, 3, 1) -> (N, 3, 1)
         v0_w_batch = all_R0 @ v0_cam_batch
-        
-        # Riportiamo a (3, N)
         v0_w = v0_w_batch.squeeze(-1).T
 
-        # 4. Angoli
+        # Angles computation
         cos_angles = np.sum(v0_w * v1_w, axis=0)
         return np.arccos(np.clip(cos_angles, -1.0, 1.0))
     
@@ -605,7 +578,6 @@ class VO():
         """
         max_points = self.max_num_ba_points
         z_threshold = self.z_threshold_ba
-        print("BUFFER FRAMES", len(self.buffer))
 
         n_fix = int(getattr(self, "n_fix_ba", 2))  # e.g. 2
         if len(self.buffer) < max(n_fix + 1, 2):
@@ -617,8 +589,6 @@ class VO():
 
         if n_frames <= n_fix:
             return
-
-        print(f"optimizing {n_frames} frames (fixing first {n_fix})")
 
         # ---- Collect valid landmark ids observed in the window ----
         observed_ids = set().union(*(f['obs'].keys() for f in window_frames))
@@ -633,33 +603,23 @@ class VO():
         candidate_global_indices = [global_id_map[id] for id in valid_ids]
         points_3d_world = self.S["X"][:, candidate_global_indices]  # 3 x N
 
-        last_pose = window_frames[-1]['pose']  # expected 3x4
+        last_pose = window_frames[-1]['pose']  
         R_cw_last = last_pose[:3, :3]
         t_cw_last = last_pose[:3, 3]
         depth = R_cw_last[2, :] @ points_3d_world + t_cw_last[2]
 
 
-        close_enough_indices = np.where((depth > 1.0) & (depth < z_threshold))[0]
-        # for S["count"] : # take the ones already present in the last but one frame (to have the same dimension)
-        # preliminary_indices = np.where((depth > 0.1) & (depth < z_threshold) & (self.S["count"][self.S["count"] > 1] >= self.min_frame_count))[0]
-        preliminary_indices = np.where((depth > 1.0) & (depth < z_threshold) & (self.S["count"] >= self.min_frame_count))[0]
-        # print(close_enough_indices)
-        # print(preliminary_indices)
-        # quit()
-        close_enough_indices = preliminary_indices
+        preliminary_indices = np.where((depth > z_threshold[0]) & (depth < z_threshold[1]) & (self.S["count"] >= self.min_frame_count))[0]
         
-        if close_enough_indices.size == 0:
+        if preliminary_indices.size == 0:
             print("NO close enough indices")
             return
 
-        if close_enough_indices.size > max_points:
-            surviving_z = depth[close_enough_indices]
-            # top_k_local = np.argsort(surviving_z)[:max_points]
-            # final_indices = close_enough_indices[top_k_local]
-            random_selection = np.random.choice(close_enough_indices.size, size=max_points, replace=False)
-            final_indices = close_enough_indices[random_selection]
+        if preliminary_indices.size > max_points:
+            random_selection = np.random.choice(preliminary_indices.size, size=max_points, replace=False)
+            final_indices = preliminary_indices[random_selection]
         else:
-            final_indices = close_enough_indices
+            final_indices = preliminary_indices
 
         valid_ids = np.array(valid_ids)[final_indices].tolist()
 
@@ -685,6 +645,7 @@ class VO():
             return
 
         camera_indices_global = np.asarray(camera_indices_global, dtype=int)
+
         point_indices = np.asarray(point_indices, dtype=int)
         observations = np.asarray(observations, dtype=float)
 
@@ -720,21 +681,16 @@ class VO():
         z_obs_values = np.einsum('ij,ij->i', R_obs_init[:, 2, :], p_obs_init) + t_obs_init[:, 2]
         z_obs_values = np.maximum(z_obs_values, 0.5)  # avoid huge weights
         obs_weights = 1.0 / z_obs_values 
-        # obs_weights = np.ones(len(observations))
+        # an alternative would be: obs_weights = np.ones(len(observations))
 
 
 
         # ---- Sparsity (only FREE cameras are variables) ----
         n_poses_free = n_frames - n_fix
-        # Map global camera index -> free camera index (or -1 if fixed)
-        cam_free_idx = camera_indices_global - n_fix
-        obs_mask_free = cam_free_idx >= 0
 
-        camera_indices_free = cam_free_idx[obs_mask_free]
-        point_indices_free = point_indices[obs_mask_free]
-        # Note: sparsity is built only for residual rows that depend on free cameras;
-        # residuals for fixed-camera observations will only depend on points.
-        # We'll build a custom sparsity below for all residuals.
+        # sparsity is built only for residual rows that depend on free cameras
+        # residuals for fixed-camera observations will only depend on points
+        # we build a custom sparsity below for all residuals
 
         m = camera_indices_global.size * 2
         n = n_poses_free * 6 + n_points * 3
@@ -786,7 +742,7 @@ class VO():
             cx, cy = self.K[0, 2], self.K[1, 2]
 
             z = P_cam[:, 2]
-            z = np.where(z > 1e-6, z, 1e-6)  # avoid div0
+            z = np.where(z > 1e-6, z, 1e-6) 
 
             u = fx * (P_cam[:, 0] / z) + cx
             v = fy * (P_cam[:, 1] / z) + cy
@@ -797,18 +753,18 @@ class VO():
 
         f0 = residual_function_fixed_gauge(x0)
         cost0 = 0.5 * np.dot(f0, f0)
-        print("cost0:", cost0)
+        print(f"Running BA. Initial cost: {cost0:.5f}")
+
+
         # ---- Solve ----
         res = least_squares(
             residual_function_fixed_gauge, x0,
             jac_sparsity=sparse_matrix,
             method='trf', x_scale='jac',
-            # x_scale =1.0,
             ftol=self.ba_tol, xtol=self.ba_tol, gtol=self.ba_tol,
-            verbose=0, loss='huber', f_scale=1.5, max_nfev=8
+            verbose=0, loss='huber', f_scale=1.5, max_nfev=self.max_nfev
         )
         x_opt = res.x
-        print("cost:", res.cost, "nfev:", res.nfev, "status:", res.status)
 
         opt_cam_free = x_opt[:n_poses_free * 6].reshape((n_poses_free, 6))
         opt_points = x_opt[n_poses_free * 6:].reshape((n_points, 3))
@@ -843,9 +799,8 @@ class VO():
         # ---- Update 3D points in state ----
         self.S["X"][:, global_indices] = opt_points.T
 
-        print(f"BA(fixed {n_fix}): {n_frames} frames, {n_points} pts. Cost: {res.cost:.2f}")
+        print(f"BA(fixed {n_fix} points): {n_frames} frames, {n_points} pts. nfev: {res.nfev} Final cost: {res.cost:.5f}")
         return
-
 
 
     def build_sparsity(self, n_poses,n_points, camera_indices, point_indices):
@@ -863,58 +818,4 @@ class VO():
             sparse_matrix[2*i+1,n_poses*6+point_indices*3+k]=1
         return sparse_matrix
     
-    def residual_function(self, params, n_frames, n_points, camera_indices, point_indices, observed_points, K, weights):
-        # Recover camera and points parameters
-        camera_params = params[:n_frames * 6].reshape((n_frames, 6))
-        points_3d = params[n_frames * 6:].reshape((n_points, 3))
-        
-        rvecs = camera_params[:, :3]
-        tvecs = camera_params[:, 3:]
-
-        # Extraxt R
-        Rs = np.zeros((n_frames, 3, 3))
-        for i in range(n_frames):
-            Rs[i], _ = cv2.Rodrigues(rvecs[i])
-
-        R_obs = Rs[camera_indices] 
-        t_obs = tvecs[camera_indices] 
-        p_3d_obs = points_3d[point_indices] 
-        
-        #World -> Camera
-        P_camera = np.einsum('kij,kj->ki', R_obs, p_3d_obs) + t_obs
-        
-        fx, fy = K[0, 0], K[1, 1]
-        cx, cy = K[0, 2], K[1, 2]
-        
-        z_inv = 1.0 / (P_camera[:, 2] + 1e-6) # Numerical stability
-        u = fx * (P_camera[:, 0] * z_inv) + cx
-        v = fy * (P_camera[:, 1] * z_inv) + cy
-        
-        projected = np.column_stack([u, v])
-        
-        # Weighted residuals
-        residuals = (projected - observed_points) * weights[:, np.newaxis]
-        
-        return residuals.ravel()
-    
-
-def main():
-    ds = 3
-    use_ba = True
-    visualize_frames = False
-    args = {
-        "buffer_dim" : 10,
-        "update_freq" : 8,
-        "n_fix_ba": 2,
-        "min_frame_count" : 0,
-        "max_num_ba_points" : 500,
-        "ba_tol" : 1e-3,
-        "max_num_corners" : 600,
-    }
-
-    vo = VO(ds = ds, use_ba=use_ba, visualize_frames= visualize_frames, args=args)
-    vo.run()
-
-if __name__ == "__main__":
-    main()
-
+ 

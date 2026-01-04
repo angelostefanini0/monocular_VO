@@ -1,5 +1,4 @@
 import numpy as np
-import cv2
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.patches import FancyArrowPatch
