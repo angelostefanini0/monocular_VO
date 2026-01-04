@@ -44,8 +44,8 @@ class VO():
             self.n_fix_ba = args.get("n_fix_ba", 1)
             self.min_frame_count = args.get("min_frame_count", 3)
             self.max_num_ba_points = args.get("max_num_ba_points", 5000)
-            self.z_thresholt_ba = args.get("z_thresholt_ba", 1000.0)
-            self.ba_tol = args.get("ba_tol", 1)
+            self.z_threshold_ba = args.get("z_threshold_ba", 100.0)
+            self.ba_tol = args.get("ba_tol", 1e-3)
             self.buffer = []
 
         # --- State ---
@@ -127,7 +127,7 @@ class VO():
             ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
             ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
             self.last_frame = 2670
-            # self.last_frame = 300    #TEST
+            # self.last_frame = 500    #TEST
             self.K = np.array([
                 [7.18856e+02, 0, 6.071928e+02],
                 [0, 7.18856e+02, 1.852157e+02],
@@ -178,7 +178,7 @@ class VO():
             self.bootstrap_frames = [0, 15] #frames betweem which bootstrap is performed
             self.HAS_GT=False
             self.gt_x=self.gt_z=None
-            self.last_frame = 1740
+            self.last_frame = 602
             self.dataset_path = r"./datasets/our_dataset8"
             self.K = np.array([
                 [1109.7, 0, 637.5062],
@@ -604,7 +604,7 @@ class VO():
         - self.S["X"] for optimized points
         """
         max_points = self.max_num_ba_points
-        z_threshold = self.z_thresholt_ba
+        z_threshold = self.z_threshold_ba
         print("BUFFER FRAMES", len(self.buffer))
 
         n_fix = int(getattr(self, "n_fix_ba", 2))  # e.g. 2
@@ -719,8 +719,8 @@ class VO():
 
         z_obs_values = np.einsum('ij,ij->i', R_obs_init[:, 2, :], p_obs_init) + t_obs_init[:, 2]
         z_obs_values = np.maximum(z_obs_values, 0.5)  # avoid huge weights
-        # obs_weights = 1.0 / z_obs_values TODO
-        obs_weights = np.ones(len(observations))
+        obs_weights = 1.0 / z_obs_values 
+        # obs_weights = np.ones(len(observations))
 
 
 
@@ -803,8 +803,9 @@ class VO():
             residual_function_fixed_gauge, x0,
             jac_sparsity=sparse_matrix,
             method='trf', x_scale='jac',
+            # x_scale =1.0,
             ftol=self.ba_tol, xtol=self.ba_tol, gtol=self.ba_tol,
-            verbose=0, loss='huber', f_scale=1.5, max_nfev=50
+            verbose=0, loss='huber', f_scale=1.5, max_nfev=20
         )
         x_opt = res.x
         print("cost:", res.cost, "nfev:", res.nfev, "status:", res.status)
@@ -898,16 +899,17 @@ class VO():
     
 
 def main():
-    ds = 0
+    ds = 3
     use_ba = True
-    visualize_frames = False
+    visualize_frames = True
     args = {
-        "buffer_dim" : 8,
-        "update_freq" : 7,
-        "n_fix_ba": 1,
-        "min_frame_count" : 3,
-        "max_num_ba_points" : 5000,
-        "ba_tol" : 1e-3
+        "buffer_dim" : 10,
+        "update_freq" : 8,
+        "n_fix_ba": 2,
+        "min_frame_count" : 0,
+        "max_num_ba_points" : 500,
+        "ba_tol" : 1e-3,
+        "max_num_corners" : 600,
     }
 
     vo = VO(ds = ds, use_ba=use_ba, visualize_frames= visualize_frames, args=args)
