@@ -11,7 +11,7 @@ import time
 # --- Setup ---
 ds = 0  # 0: KITTI, 1: Malaga, 2: Parking, 3: Own Dataset
 visualize_frames = False
-use_BA=False
+use_BA=True
 
 # Define dataset paths
 # (Set these variables before running)
@@ -29,7 +29,7 @@ if ds == 0:
     ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
     ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
     last_frame = 2670
-    last_frame = 1000    #TEST
+    # last_frame = 500    #TEST
     K = np.array([
         [7.18856e+02, 0, 6.071928e+02],
         [0, 7.18856e+02, 1.852157e+02],
