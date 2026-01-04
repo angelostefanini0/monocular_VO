@@ -179,7 +179,7 @@ class VO():
             self.HAS_GT=False
             self.gt_x=self.gt_z=None
             self.last_frame = 602
-            self.dataset_path = r"./datasets/our_dataset8"
+            self.dataset_path = r"./datasets/our_dataset7"
             self.K = np.array([
                 [1109.7, 0, 637.5062],
                 [0, 1113.5, 357.1623],
@@ -639,10 +639,10 @@ class VO():
         depth = R_cw_last[2, :] @ points_3d_world + t_cw_last[2]
 
 
-        close_enough_indices = np.where((depth > 0.1) & (depth < z_threshold))[0]
+        close_enough_indices = np.where((depth > 1.0) & (depth < z_threshold))[0]
         # for S["count"] : # take the ones already present in the last but one frame (to have the same dimension)
         # preliminary_indices = np.where((depth > 0.1) & (depth < z_threshold) & (self.S["count"][self.S["count"] > 1] >= self.min_frame_count))[0]
-        preliminary_indices = np.where((depth > 0.1) & (depth < z_threshold) & (self.S["count"] >= self.min_frame_count))[0]
+        preliminary_indices = np.where((depth > 1.0) & (depth < z_threshold) & (self.S["count"] >= self.min_frame_count))[0]
         # print(close_enough_indices)
         # print(preliminary_indices)
         # quit()
@@ -805,7 +805,7 @@ class VO():
             method='trf', x_scale='jac',
             # x_scale =1.0,
             ftol=self.ba_tol, xtol=self.ba_tol, gtol=self.ba_tol,
-            verbose=0, loss='huber', f_scale=1.5, max_nfev=20
+            verbose=0, loss='huber', f_scale=1.5, max_nfev=8
         )
         x_opt = res.x
         print("cost:", res.cost, "nfev:", res.nfev, "status:", res.status)
@@ -901,7 +901,7 @@ class VO():
 def main():
     ds = 3
     use_ba = True
-    visualize_frames = True
+    visualize_frames = False
     args = {
         "buffer_dim" : 10,
         "update_freq" : 8,
