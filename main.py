@@ -4,8 +4,8 @@ from VO import VO
 
 
 def main():
-    ds = 2
-    use_ba = False
+    ds = 0
+    use_ba = True
     visualize_frames = False
 
     args = {
@@ -47,7 +47,8 @@ def main():
         pass
     elif ds == 3:
         if use_ba == True:
-            args["max_nfev"] = 8
+            args["ba_tol"] = 5e-2
+            args["max_nfev"] = 20
 
     np.random.seed(42)
     vo = VO(ds = ds, use_ba=use_ba, visualize_frames= visualize_frames, args=args)

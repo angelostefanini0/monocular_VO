@@ -17,7 +17,7 @@ class VO():
 
         #KLT PARAMETERS
         self.klt_params=dict(
-            winSize=(21,21),
+            winSize=(21,21), 
             maxLevel=3,
             criteria=(cv2.TERM_CRITERIA_EPS|cv2.TERM_CRITERIA_COUNT,30,0.01)
         )
@@ -177,8 +177,8 @@ class VO():
             self.bootstrap_frames = [0, 15] #frames betweem which bootstrap is performed
             self.HAS_GT=False
             self.gt_x=self.gt_z=None
-            self.last_frame = 600
-            self.dataset_path = r"./datasets/our_dataset7"
+            self.last_frame = 602
+            self.dataset_path = r"./datasets/our_dataset8"
             self.K = np.array([
                 [1109.7, 0, 637.5062],
                 [0, 1113.5, 357.1623],
