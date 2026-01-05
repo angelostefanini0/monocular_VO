@@ -247,11 +247,18 @@ class VO():
         corr1=keypoints1.T.astype(np.float32)
         corr2=keypoints2.T.astype(np.float32)
 
-        E,maskE=cv2.findEssentialMat(corr1,corr2,self.K,method=cv2.RANSAC,prob=self.prob_essent_mat,threshold=self.thresh_essent_mat)
-        maskE=maskE.reshape(-1).astype(bool)
+        F,maskF=cv2.findFundamentalMat(corr1, corr2, method=cv2.FM_8POINT, ransacReprojThreshold=self.thresh_essent_mat,confidence=self.prob_essent_mat)
+        #retrieve essential matrix
+        E_approx=self.K.T@F@self.K
+        # essential matrix refinement
+        U, S, Vt = np.linalg.svd(E_approx)
+        S_new = np.diag([1, 1, 0])
+        E = U @ S_new @ Vt
+
+        maskF=maskF.reshape(-1).astype(bool)
         #we take only the inlier correspondences
-        corr1_inliers=corr1[maskE]
-        corr2_inliers=corr2[maskE]
+        corr1_inliers=corr1[maskF]
+        corr2_inliers=corr2[maskF]
         #decompose E into R and t
         _,R,t,maskPose=cv2.recoverPose(E,corr1_inliers,corr2_inliers,self.K)
         #filter again good correspondences
