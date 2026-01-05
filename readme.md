@@ -5,7 +5,14 @@
 
 ## How to Use
 ### 1. Prerequisites
-Environment needed can be found the .yml file
+
+The required Python environment and all dependencies are defined in the `environment.yml` file.  
+Make sure you have **Conda** (or Miniconda) installed, then create and activate the environment by running:
+
+```bash
+conda env create -f environment.yml
+conda activate vo
+```
 
 ### 2. Dataset Setup
 
@@ -36,13 +43,15 @@ Simply execute the main script:
 python main.py
 
 ```
-
-
-##  Output
+## Output
 
 * **Live View**: If `visualize_frames` is True, you will see a real-time update of the camera view, the 3D landmarks, and the estimated trajectory.
-* **Final plot of the trajectory**, saved in traj.png, if `visualize_frames` is False
-* **Performance**: Upon completion, the script prints the total processing time and the average Frame Rate (Hz). (note that if live plot is enabled performance is much worse)
+* **Final trajectory plot**: If `visualize_frames` is False, the final estimated trajectory is saved as `traj.png`.
+* **Performance statistics**: Upon completion, the script prints the total processing time and the average frame rate (Hz).  
+  *(Note: enabling live visualization significantly degrades performance.)*
+* **Per-frame diagnostic output**: For each processed frame, the script prints diagnostic information to the console, including the number of tracked keypoints, PnP inliers, Bundle Adjustment statistics (when enabled), and the number of newly added 3D points.
+
+
 
 ---
 --- 
