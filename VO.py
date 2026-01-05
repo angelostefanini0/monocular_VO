@@ -152,7 +152,7 @@ class VO():
                 for f in os.listdir(img_dir)
                 if f.endswith("_left.jpg")
             ])
-            self.last_frame = len(self.left_images) - 200
+            self.last_frame = len(self.left_images)-1
             self.K = np.array([
                 [621.18428, 0, 404.0076],
                 [0, 621.18428, 309.05989],
@@ -175,7 +175,6 @@ class VO():
             self.gt_x=poses[:,3]
             self.gt_z=poses[:,11]
             if self.use_ba:
-                self.buffer_dim = 5
                 self.ba_tol = 1e-3
         elif self.ds == 3:
             self.ANGLE_THRESHOLD = np.deg2rad(0.1)

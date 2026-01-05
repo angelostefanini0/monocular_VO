@@ -4,7 +4,7 @@ from VO import VO
 
 
 def main():
-    ds = 3
+    ds = 1
     use_ba = True
     visualize_frames = False
 
@@ -42,8 +42,8 @@ def main():
             pass
     elif ds == 1:
         if use_ba == True:
-            args["ba_tol"] = 1e-2
             args["z_threshold_ba"] = [0.1, 100.0]
+            args["n_fix_ba"]=2
 
     elif ds == 2:
         pass
