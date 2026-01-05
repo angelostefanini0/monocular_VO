@@ -12,7 +12,6 @@ data/
 *.mov
 *.mkv
 *.bag
-*.pdf
 
 __pycache__/
 *.py[cod]
