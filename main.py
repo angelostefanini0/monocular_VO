@@ -37,7 +37,9 @@ def main():
 
     if ds == 0:
         if use_ba == False:
-            args["max_num_corners"] = 1000
+            # for better scale: uncomment the following line
+            #args["max_num_corners"] = 1000
+            pass
     elif ds == 1:
         if use_ba == True:
             args["ba_tol"] = 1e-2

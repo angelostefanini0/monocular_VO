@@ -110,7 +110,7 @@ class VO():
         if not self.visualize_frames:
             end_time = time.time()
             Hz = self.last_frame/(end_time - start_time)
-            print(f"Processed {self.last_frame} in {end_time - start_time} sec")
+            print(f"Processed {self.last_frame} frames in {end_time - start_time} sec")
             print(f"Frame rate: {Hz} Hz")
             plot_trajectory(self.traj, self.HAS_GT, self.gt_x, self.gt_z)
 
