@@ -21,7 +21,7 @@ The code expects datasets to be located in a `./datasets/` folder.
 * **KITTI**: Place in `./datasets/kitti/`
 * **Malaga**: Place in `./datasets/malaga-urban-dataset-extract-07/`
 * **Parking**: Place in `./datasets/parking/`
-* **Our**: Place in `./datasets/our_dataset8/`
+* **Our**: Place in `./datasets/our_dataset12/`
 
 ### 3. Configuration
 
