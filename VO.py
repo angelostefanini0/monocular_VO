@@ -182,8 +182,9 @@ class VO():
             self.bootstrap_frames = [0, 15] #frames betweem which bootstrap is performed
             self.HAS_GT=False
             self.gt_x=self.gt_z=None
-            self.last_frame = 602
-            self.dataset_path = r"./datasets/our_dataset8"
+            # self.last_frame = 602
+            self.last_frame = 1806
+            self.dataset_path = r"./datasets/our_dataset12"
             self.K = np.array([
                 [1109.7, 0, 637.5062],
                 [0, 1113.5, 357.1623],
@@ -256,7 +257,7 @@ class VO():
         # corr2_inliers=corr2[maskE]
 
         # New version with fundamental:
-        F,maskF=cv2.findFundamentalMat(corr1, corr2, method=cv2.FM_8POINT, ransacReprojThreshold=self.thresh_essent_mat,confidence=self.prob_essent_mat)
+        F,maskF=cv2.findFundamentalMat(corr1, corr2, method=cv2.FM_RANSAC, ransacReprojThreshold=self.thresh_essent_mat,confidence=self.prob_essent_mat)
         #retrieve essential matrix
         E_approx=self.K.T@F@self.K
         # essential matrix refinement
