@@ -48,7 +48,7 @@ python main.py
 * **Live View**: If `visualize_frames` is True, you will see a real-time update of the camera view, the 3D landmarks, and the estimated trajectory.
 * **Final trajectory plot**: If `visualize_frames` is False, the final estimated trajectory is saved as `traj.png`.
 * **Performance statistics**: Upon completion, the script prints the total processing time and the average frame rate (Hz).  
-  *(Note: enabling live visualization significantly degrades performance.)*
+
 * **Per-frame diagnostic output**: For each processed frame, the script prints diagnostic information to the console, including the number of tracked keypoints, PnP inliers, Bundle Adjustment statistics (when enabled), and the number of newly added 3D points.
 
 
