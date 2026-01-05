@@ -126,7 +126,7 @@ class VO():
             ground_truth = np.loadtxt(os.path.join(kitti_path, 'poses', '05.txt'))
             ground_truth = ground_truth[:, [-9, -1]]  # same as MATLAB(:, [end-8 end])
             self.last_frame = 2670
-            # self.last_frame = 200 #TEST
+            #self.last_frame = 1000 #TEST
             self.K = np.array([
                 [7.18856e+02, 0, 6.071928e+02],
                 [0, 7.18856e+02, 1.852157e+02],
@@ -136,6 +136,8 @@ class VO():
             poses=np.loadtxt(os.path.join(kitti_path,'poses','05.txt')) #N x 12
             self.gt_x=poses[:,3]
             self.gt_z=poses[:,11]
+            if self.use_ba:
+                self.ba_tol = 1e-3
         elif self.ds == 1:
             self.ANGLE_THRESHOLD = np.deg2rad(0.02)
             self.bootstrap_frames = [0, 2] #frames betweem which bootstrap is performed
@@ -150,7 +152,7 @@ class VO():
                 for f in os.listdir(img_dir)
                 if f.endswith("_left.jpg")
             ])
-            self.last_frame = len(self.left_images) - 1
+            self.last_frame = len(self.left_images) - 200
             self.K = np.array([
                 [621.18428, 0, 404.0076],
                 [0, 621.18428, 309.05989],
@@ -172,6 +174,9 @@ class VO():
             poses=np.loadtxt(os.path.join(parking_path,'poses.txt'))  #N x 12
             self.gt_x=poses[:,3]
             self.gt_z=poses[:,11]
+            if self.use_ba:
+                self.buffer_dim = 5
+                self.ba_tol = 1e-3
         elif self.ds == 3:
             self.ANGLE_THRESHOLD = np.deg2rad(0.1)
             self.bootstrap_frames = [0, 15] #frames betweem which bootstrap is performed
@@ -358,7 +363,7 @@ class VO():
             reprojectionError=self.rep_error, #defines how far from the model points start to be considered outliers
             iterationsCount=self.iter_count, #max number of iteration of RANSAC
             confidence=self.confidence,
-            flags=cv2.SOLVEPNP_ITERATIVE
+            flags=cv2.SOLVEPNP_P3P
         )
 
         if (not ok) or (inliers is None) or (len(inliers) < 4):

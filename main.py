@@ -4,34 +4,34 @@ from VO import VO
 
 
 def main():
-    ds = 0
+    ds = 3
     use_ba = True
     visualize_frames = False
 
     args = {
         # goodFeaturesToTrack
         "max_num_corners_bootstrap": 1000,
-        "max_num_corners": 600,
+        "max_num_corners": 300,
         "quality_level": 0.01,
-        "min_distance": 2,
+        "min_distance": 6,
 
         # findEssentialMat
         "prob_essent_mat": 0.99,
         "thresh_essent_mat": 1.0,
 
         # PNP RANSAC
-        "rep_error": 3.0,
+        "rep_error": 1.0,
         "iter_count": 2000,
         "confidence": 0.99,
 
         # Bundle Adjustment
-        "buffer_dim": 10,
-        "update_freq": 8,
-        "n_fix_ba": 2,
+        "buffer_dim": 5,
+        "update_freq": 1,
+        "n_fix_ba": 1,
         "min_frame_count": 0,
-        "max_num_ba_points": 500,
+        "max_num_ba_points": 100,
         "z_threshold_ba": [1.0, 100.0],
-        "ba_tol": 1e-3,
+        "ba_tol": 1e-2,
         "max_nfev": 50
     }
 
