@@ -2,8 +2,6 @@ datasets/
 data/
 */datasets/
 */data/
-*.svg
-*.png
 *.jpg
 *.jpeg
 *.bmp
