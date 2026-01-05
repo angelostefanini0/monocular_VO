@@ -4,8 +4,8 @@ from VO import VO
 
 
 def main():
-    ds = 3
-    use_ba = True
+    ds = 1
+    use_ba = False
     visualize_frames = False
 
     args = {
@@ -37,13 +37,11 @@ def main():
 
     if ds == 0:
         if use_ba == False:
-            # for better scale: uncomment the following line
-            #args["max_num_corners"] = 1000
             pass
     elif ds == 1:
         if use_ba == True:
-            args["ba_tol"] = 1e-2
             args["z_threshold_ba"] = [0.1, 100.0]
+            args["n_fix_ba"] = 2
 
     elif ds == 2:
         pass
