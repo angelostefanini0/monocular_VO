@@ -5,7 +5,14 @@
 
 ## How to Use
 ### 1. Prerequisites
-Environment needed can be found the .yml file
+
+The required Python environment and all dependencies are defined in the `environment.yml` file.  
+Make sure you have **Conda** (or Miniconda) installed, then create and activate the environment by running:
+
+```bash
+conda env create -f environment.yml
+conda activate vo
+```
 
 ### 2. Dataset Setup
 
@@ -87,4 +94,3 @@ Below is a detailed breakdown of the parameters found in `main.py`:
 ---
 
 ---
-
