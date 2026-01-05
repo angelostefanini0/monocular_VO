@@ -4,8 +4,8 @@ from VO import VO
 
 
 def main():
-    ds = 1
-    use_ba = False
+    ds = 0
+    use_ba = True
     visualize_frames = False
 
     args = {
