@@ -64,27 +64,27 @@ Below is a detailed breakdown of the parameters found in `main.py`:
 ### Feature Detection & Tracking
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `max_num_corners` | 600| Max new features to add per frame. |
+| `max_num_corners` | 300| Max new features to add per frame. |
 | `max_num_corners_bootstrap` | 1000 | Number of features used for the initial two-frame alignment. |
 | `quality_level` | 0.01 | Threshold for Shi-Tomasi corner detection (higher = stricter). |
-| `min_distance` | 2 | Minimum pixel distance between detected features. |
+| `min_distance` | 6 | Minimum pixel distance between detected features. |
 
 ### Localization (PnP RANSAC)
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `rep_error` | 3.0 | Maximum allowed reprojection error (pixels) for RANSAC inliers. |
+| `rep_error` | 1.0 | Maximum allowed reprojection error (pixels) for RANSAC inliers. |
 | `iter_count` | 2000 | Maximum number of RANSAC iterations for pose estimation. |
 | `confidence` | 0.99 | Probability that the RANSAC estimate is correct. |
 
 ### Bundle Adjustment (BA)
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `buffer_dim` | 10 | Number of recent frames included in the sliding window. |
-| `update_freq` | 8 | How many frames to skip between BA optimizations. |
-| `n_fix_ba` | 2 | Number of "fixed" poses (gauge fixing) to anchor the map. |
-| `max_num_ba_points` | 500 | Max number of 3D points to optimize (for performance). |
+| `buffer_dim` | 5 | Number of recent frames included in the sliding window. |
+| `update_freq` | 1 | How many frames to skip between BA optimizations. |
+| `n_fix_ba` | 1 | Number of "fixed" poses (gauge fixing) to anchor the map. |
+| `max_num_ba_points` | 100 | Max number of 3D points to optimize (for performance). |
 | `z_threshold_ba` | [1.0, 100.0] | Valid depth range for points to be included in BA. |
-| `ba_tol` | 1e-3 | Tolerance for the least_squares optimizer convergence. |
+| `ba_tol` | 1e-2 | Tolerance for the least_squares optimizer convergence. |
 | `max_nfev` | 50 | Maximum number of function evaluations for the optimizer. |
 | `min_frame_count` | 0 | Minimum number of frames a point must be seen in before optimization (otherwise excluded). |
 
