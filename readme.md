@@ -52,8 +52,6 @@ python main.py
 * **Per-frame diagnostic output**: For each processed frame, the script prints diagnostic information to the console, including the number of tracked keypoints, PnP inliers, Bundle Adjustment statistics (when enabled), and the number of newly added 3D points.
 
 
-
----
 --- 
 ## Hyperparameters
 
